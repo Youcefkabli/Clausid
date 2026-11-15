@@ -65,15 +65,33 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       title: 'Unauthorized workspace contract', requestId: crypto.randomUUID(), workspaceId,
     })
     expect(inaccessibleWorkspace.status()).toBe(404)
+    const appHeader = first.getByRole('navigation', { name: 'Top navigation' })
+    const originalHeaderHeight = await appHeader.evaluate((element) => element.getBoundingClientRect().height)
     await first.getByRole('button', { name: 'Add document' }).click()
     await first.getByLabel('Contract title').fill('Services agreement')
     await first.getByRole('button', { name: 'Create contract', exact: true }).click()
     await expect(first.getByRole('textbox', { name: 'Contract document' })).toBeVisible()
-    const fullscreen = first.locator('.contract-editor-fullscreen')
-    await expect(fullscreen).toBeVisible()
-    expect(await fullscreen.evaluate((element) => {
+    await expect(appHeader.getByRole('link', { name: 'Clausid', exact: true })).toBeVisible()
+    await expect(appHeader.getByRole('button', { name: 'Account settings' })).toBeVisible()
+    await expect(appHeader.getByRole('button', { name: 'Menu', exact: true })).toBeVisible()
+    await expect(appHeader.getByRole('group', { name: 'Open documents' })).toContainText('Services agreement')
+    await expect(appHeader.getByRole('button', { name: 'Export', exact: true })).toBeVisible()
+    const desktopViewport = first.viewportSize()!
+    for (const width of [desktopViewport.width, 641, 390, 320]) {
+      await first.setViewportSize({ width, height: desktopViewport.height })
+      await expect.poll(() => appHeader.evaluate((element) => element.getBoundingClientRect().height),
+        { message: `App header height at ${width}px` })
+        .toBe(originalHeaderHeight)
+      await expect(appHeader.getByRole('button', { name: 'Export', exact: true })).toBeVisible()
+      await expect(appHeader.getByRole('button', { name: 'Account settings' })).toBeVisible()
+    }
+    await first.setViewportSize(desktopViewport)
+    const canvas = first.locator('.contract-editor')
+    await expect(canvas).toBeVisible()
+    expect(await canvas.evaluate((element) => {
       const bounds = element.getBoundingClientRect()
-      return bounds.top === 0 && bounds.left === 0 && bounds.width === innerWidth && bounds.height === innerHeight
+      return bounds.top > 0 && bounds.left === 0 && bounds.width === innerWidth
+        && Math.abs(bounds.bottom - innerHeight) < 1
     })).toBe(true)
     await expect(first.getByRole('group', { name: 'Open documents' })).toContainText('Services agreement')
     await expect(first.getByLabel('Layers and assets', { exact: true })).toBeVisible()

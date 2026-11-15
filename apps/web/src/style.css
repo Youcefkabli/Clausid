@@ -84,11 +84,11 @@ iframe {
   }
 }
 
-.contract-editor-fullscreen {
+.contract-editor {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100dvh;
+  height: 100%;
   overflow: hidden;
 }
 

@@ -1,5 +1,6 @@
 import { AccountSettingsDialog } from './account-settings.tsx'
 import CanvasEditor from './app/canvas-editor/page.tsx'
+import type { CanvasHeader } from './app/canvas-editor/page.tsx'
 import { Layout, LayoutContent, LayoutFooter, LayoutHeader } from '@astryxdesign/core/Layout'
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Stack'
 import { Step, Stepper } from '@astryxdesign/core/Stepper'
@@ -30,7 +31,7 @@ import type { AppStore } from './store.ts'
 
 export function ContractPage({ id, account, store, renderPage }: {
   id: string; account: { name: string; email: string }; store: AppStore
-  renderPage: (content: ReactNode) => ReactNode
+  renderPage: (content: ReactNode, editorHeader?: CanvasHeader) => ReactNode
 }) {
   const [room] = useState(() => {
     const document = new Y.Doc()
@@ -217,23 +218,22 @@ export function ContractPage({ id, account, store, renderPage }: {
   </>
 
   if (started && ((draft && !connection.ended) || recoverable)) {
-    return <main className="contract-editor-fullscreen">
-      <VisuallyHidden as="h1">{contract.title}</VisuallyHidden>
-      {pageFeedback}
-      <div className="contract-editor-viewport">
-        <CanvasEditor title={contract.title} document={room.document} awareness={room.awareness}
-          name={account.name} editable={canEdit}
-          syncStatus={draft && !connection.ended ? (
-            !connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved'
-          ) : undefined}
-          onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
-          onPrepare={draft && canManage && !connection.ended ? () => openModal(setPrepare) : undefined}
-          canPrepare={Boolean(canPrepare)}
-          onAccountSettings={() => setAccountOpen(true)} />
-      </div>
-      {dialogs}
-      {accountOpen && <AccountSettingsDialog isOpen={accountOpen} onOpenChange={setAccountOpen} account={account} />}
-    </main>
+    return <CanvasEditor title={contract.title} document={room.document} awareness={room.awareness}
+      name={account.name} editable={canEdit}
+      syncStatus={draft && !connection.ended ? (
+        !connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved'
+      ) : undefined}
+      onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
+      onPrepare={draft && canManage && !connection.ended ? () => openModal(setPrepare) : undefined}
+      canPrepare={Boolean(canPrepare)}
+      onAccountSettings={() => setAccountOpen(true)}
+      renderShell={(canvas, header) => renderPage(<div className="contract-editor">
+        <VisuallyHidden as="h1">{contract.title}</VisuallyHidden>
+        {pageFeedback}
+        <div className="contract-editor-viewport">{canvas}</div>
+        {dialogs}
+        {accountOpen && <AccountSettingsDialog isOpen={accountOpen} onOpenChange={setAccountOpen} account={account} />}
+      </div>, header)} />
   }
 
   return renderPage(<div className="flow">

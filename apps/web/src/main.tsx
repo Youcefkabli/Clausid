@@ -28,6 +28,7 @@ import { openStore, project, useProjection } from './store.ts'
 import { statusVariant } from './status.ts'
 import type { AppStore } from './store.ts'
 import { ContractPage } from './contract-page.tsx'
+import type { CanvasHeader } from './app/canvas-editor/page.tsx'
 import '@astryxdesign/core/reset.css'
 import '@astryxdesign/core/astryx.css'
 import '@astryxdesign/theme-neutral/fonts.css'
@@ -52,12 +53,17 @@ if (inviteKey && location.hash) {
   history.replaceState(null, '', location.pathname)
 }
 
-function Frame({ account, children }: { account?: { name: string; email: string }; children: ReactNode }) {
+function Frame({ account, children, editorHeader }: {
+  account?: { name: string; email: string }
+  children: ReactNode
+  editorHeader?: CanvasHeader
+}) {
   return <AppShell
     topNav={<TopNav heading={<TopNavHeading heading="Clausid" headingHref="/" />}
-      endContent={account && <AccountSettings account={account} />} />}
+      startContent={editorHeader?.start}
+      endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} compact={editorHeader?.compact} />}</>} />}
     contentPadding={0}
-  ><div className="page-content">{children}</div></AppShell>
+  >{editorHeader ? children : <div className="page-content">{children}</div>}</AppShell>
 }
 
 function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
@@ -217,7 +223,7 @@ function StoreGate({ account }: { account: { name: string; email: string } }) {
   }, [])
   if (store && contractMatch) {
     return <ContractPage id={contractMatch[1]} store={store} account={account}
-      renderPage={(content) => <Frame account={account}>{content}</Frame>} />
+      renderPage={(content, editorHeader) => <Frame account={account} editorHeader={editorHeader}>{content}</Frame>} />
   }
   return <Frame account={account}>
     {error ? <div role="alert"><Banner status="error" title={error} /></div>

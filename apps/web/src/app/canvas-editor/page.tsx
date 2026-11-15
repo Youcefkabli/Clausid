@@ -31,7 +31,6 @@ import {
   Layout,
   LayoutContent,
   LayoutFooter,
-  LayoutHeader,
   LayoutPanel,
   StackItem,
   VStack,
@@ -52,6 +51,7 @@ import {TextInput} from '@astryxdesign/core/TextInput';
 import {Thumbnail} from '@astryxdesign/core/Thumbnail';
 import {TreeList, type TreeListItemData} from '@astryxdesign/core/TreeList';
 import {useContainerReveal, useMediaQuery} from '@astryxdesign/core/hooks';
+import {VisuallyHidden} from '@astryxdesign/core/VisuallyHidden';
 import {Theme, defineTheme} from '@astryxdesign/core/theme';
 import {Toolbar} from '@astryxdesign/core/Toolbar';
 import {neutralTheme} from '@astryxdesign/theme-neutral/built';
@@ -717,52 +717,8 @@ const styles = stylex.create({
     height: 'auto',
     marginBlock: 'var(--spacing-1)',
   },
-  // Give the header bar its own inline padding, so the Export button stops
-  // at a margin instead of the window edge.
-  //
-  // The layout under it is set to zero padding — the panels have to reach
-  // the edges — and a Toolbar takes its inline padding from whatever
-  // container it sits in, so it inherits that zero. The fix has to arrive as
-  // Section's padding token rather than as `paddingInline`: Section renders
-  // an outer wrapper that escapes its parent's gutter and an inner one that
-  // holds the padding, xstyle lands on the outer, and padding set there
-  // makes the bar bleed 12px past the window rather than inset its contents.
-  // The token is read on the inner element, where it also republishes
-  // --container-padding-inline-*. That second effect is the one that
-  // matters: it feeds the toolbar's edge compensation, which pulls ghost
-  // triggers back out by their own padding so the menu button's *icon* lines
-  // up on the gutter while its hover box still bleeds into it.
-  headerBar: {
-    // Named so the tab strip can size against the bar rather than the window:
-    // cqw tracks this element, so it stays right if the bar ever stops being
-    // full-bleed, and it excludes a scrollbar the way vw does not.
-    containerType: 'inline-size',
-    containerName: 'editor-header',
-  },
-  // The menu, the tabs and the add button. It has to be allowed to shrink or
-  // the strip's own ceiling never binds — a flex item defaults to min-width
-  // auto, which floors it at the tabs' combined width.
-  headerLead: {
-    minWidth: 0,
-  },
-  // The open-document strip above the menubar. It scrolls rather than wraps:
-  // a second row of tabs would move the menubar down, and the whole point of
-  // the strip is that the chrome above the canvas has a fixed height.
-  tabStrip: {
-    minWidth: 0,
-    flexShrink: 1,
-    // The strip has to cap itself, which is the one thing HStack's maxWidth
-    // cannot say for it. It sits in Toolbar's start slot, and that slot is
-    // not the one built to give way — only the centre slot carries
-    // `min-width: 0`, so a start slot grows to its content and pushes the bar
-    // wider instead of squeezing. Widening the start slot in core would
-    // change every toolbar's behaviour to suit one page's tab strip, so the
-    // cap arrives as a maxWidth prop and this only has to let it shrink.
-    //
-    // The strip is short enough that a scrollbar would eat most of it, and
-    // the tabs are draggable-looking targets already.
-    scrollbarWidth: 'none',
-  },
+  headerLead: {minWidth: 0},
+  tabStrip: {minWidth: 0, flexShrink: 1, scrollbarWidth: 'none'},
   // Folded by width, not by the View menu's toggles. Those record what the
   // user asked for; this records whether there is room to honour it, so the
   // panel comes back on its own when the window grows rather than leaving
@@ -1177,6 +1133,7 @@ function DocumentTab({
     <Item
       label={tab.name}
       density="compact"
+      style={{paddingBlock: 0}}
       isSelected={isActive}
       onClick={onSelect}
       aria-current={isActive ? 'true' : undefined}
@@ -1570,7 +1527,10 @@ function ShadowFields({
 // Page
 // =============================================================================
 
+export type CanvasHeader = {start: React.ReactNode; end: React.ReactNode; compact: boolean};
+
 type LiveDocument = {
+  renderShell: (content: React.ReactNode, header: CanvasHeader) => React.ReactNode;
   title: string;
   document: Doc;
   awareness: Awareness;
@@ -1584,9 +1544,10 @@ type LiveDocument = {
 };
 
 export default function CanvasEditor({
-  title, document, awareness, name, editable, syncStatus, onShare, onPrepare, canPrepare, onAccountSettings,
+  title, document, awareness, name, editable, syncStatus, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
 }: LiveDocument) {
   const narrow = useMediaQuery('(max-width: 900px)');
+  const compactHeader = useMediaQuery('(max-width: 640px)');
   const contractEditor = useEditor({
     extensions: [
       StarterKit.configure({link: false, undoRedo: false, trailingNode: false}),
@@ -1645,6 +1606,230 @@ export default function CanvasEditor({
 
 
 
+  const header: CanvasHeader = {
+    compact: compactHeader,
+    start: (
+      <HStack gap={0.5} vAlign="center" xstyle={styles.headerLead}>
+        {/*
+          One button for every command in the editor, the way a
+          single-window design tool does it. A menubar spends the
+          top-left on five words that are only read when someone is
+          already looking for a command; folding them into submenus
+          hands that space to the tabs, which are read constantly.
+          The commands keep their grouping — the bar became the
+          first level of the menu rather than disappearing.
+        */}
+        <DropdownMenu
+          button={{
+            label: 'Menu',
+            tooltip: 'Menu',
+            variant: 'ghost',
+            size: 'sm',
+            isIconOnly: true,
+            icon: <Icon icon={Menu} size={ICON} />,
+          }}
+          hasChevron={false}
+          // Left to itself the menu matches its trigger, and the
+          // trigger is a 28px icon button — five one-word rows in a
+          // column barely wider than the words. A set width gives
+          // the submenu chevrons somewhere to sit at the far edge,
+          // which is what makes the rows read as a menu bar folded
+          // into a list rather than a stack of buttons.
+          menuWidth={280}>
+          <DropdownMenuSubMenu label="File">
+            <DropdownMenuItem label="Back to contracts" href="/" />
+            <DropdownMenuItem label="Account settings" onClick={onAccountSettings} />
+          </DropdownMenuSubMenu>
+
+          <DropdownMenuSubMenu label="Edit">
+            <DropdownMenuItem
+              label="Undo"
+              isDisabled={!editable}
+              onClick={() => contractEditor?.chain().focus().undo().run()}
+              endContent={<Shortcut>⌘Z</Shortcut>}
+            />
+            <DropdownMenuItem
+              label="Redo"
+              isDisabled={!editable}
+              onClick={() => contractEditor?.chain().focus().redo().run()}
+              endContent={<Shortcut>⇧⌘Z</Shortcut>}
+            />
+            <DropdownMenuDivider />
+            <DropdownMenuItem
+              label="Cut"
+              endContent={<Shortcut>⌘X</Shortcut>}
+            />
+            <DropdownMenuItem
+              label="Copy"
+              endContent={<Shortcut>⌘C</Shortcut>}
+            />
+            <DropdownMenuItem
+              label="Paste"
+              endContent={<Shortcut>⌘V</Shortcut>}
+            />
+            <DropdownMenuDivider />
+            <DropdownMenuItem
+              label="Duplicate"
+              endContent={<Shortcut>⌘D</Shortcut>}
+            />
+            {/* Named, because a menu opened from the bar has lost
+          sight of the rail: the row that would go is worth saying
+          out loud before a destructive item is clicked. */}
+            <DropdownMenuItem
+              label={`Delete ${selected.name}`}
+              variant="destructive"
+              endContent={<Shortcut>⌫</Shortcut>}
+            />
+            <DropdownMenuSubMenu label="Format text">
+              <DropdownMenuItem label="Bold" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBold().run()} />
+              <DropdownMenuItem label="Italic" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleItalic().run()} />
+              <DropdownMenuItem label="Heading" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleHeading({level: 2}).run()} />
+              <DropdownMenuItem label="Bulleted list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBulletList().run()} />
+              <DropdownMenuItem label="Numbered list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleOrderedList().run()} />
+            </DropdownMenuSubMenu>
+          </DropdownMenuSubMenu>
+
+          {/* Checkbox rows, not actions: each reports a state the
+        user can see on the page, and the menu stays open so all
+        three can be set in one visit. */}
+          <DropdownMenuSubMenu label="View">
+            <DropdownMenuCheckboxItem
+              label="Left panel"
+              icon={PanelLeft}
+              endContent={<Shortcut>⌘B</Shortcut>}
+              value={chrome.left}
+              onChange={next => setChrome(c => ({...c, left: next}))}
+            />
+            <DropdownMenuCheckboxItem
+              label="Right panel"
+              icon={PanelRight}
+              endContent={<Shortcut>⇧⌘B</Shortcut>}
+              value={chrome.right}
+              onChange={next => setChrome(c => ({...c, right: next}))}
+            />
+            <DropdownMenuCheckboxItem
+              label="Canvas tools"
+              icon={PanelBottom}
+              endContent={<Shortcut>⌘.</Shortcut>}
+              value={chrome.toolbar}
+              onChange={next =>
+                setChrome(c => ({...c, toolbar: next}))
+              }
+            />
+            <DropdownMenuDivider />
+            {/* The same value the tool bar's zoom control holds, so
+          setting it in either place moves the other. */}
+            <DropdownMenuSubMenu label="Zoom">
+              <DropdownMenuRadioGroup
+                label="Zoom"
+                value={zoom}
+                onChange={setZoom}>
+                {ZOOM_OPTIONS.map(option => (
+                  <DropdownMenuRadioItem
+                    key={option.value}
+                    value={option.value}
+                    label={option.label}
+                  />
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubMenu>
+            <DropdownMenuSubMenu label="Appearance">
+              <DropdownMenuRadioGroup
+                label="Appearance"
+                value={appearance}
+                onChange={next => setAppearance(next as ThemeMode)}>
+                <DropdownMenuRadioItem value="light" label="Light" />
+                <DropdownMenuRadioItem value="dark" label="Dark" />
+                <DropdownMenuRadioItem
+                  value="system"
+                  label="System"
+                />
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubMenu>
+          </DropdownMenuSubMenu>
+
+          <DropdownMenuSubMenu label="Object">
+            <DropdownMenuSubMenu label="Insert">
+              {INSERT_ITEMS.map(item => (
+                <DropdownMenuItem
+                  key={item.label}
+                  label={item.label}
+                  icon={item.icon}
+                />
+              ))}
+            </DropdownMenuSubMenu>
+            <DropdownMenuDivider />
+            <DropdownMenuItem
+              label="Bring forward"
+              endContent={<Shortcut>⌘]</Shortcut>}
+            />
+            <DropdownMenuItem
+              label="Send backward"
+              endContent={<Shortcut>⌘[</Shortcut>}
+            />
+            <DropdownMenuDivider />
+            {/* The lock the rail row reveals on hover, reached from
+          the menubar instead — one piece of state, two ways in. */}
+            <DropdownMenuCheckboxItem
+              label={`Lock ${selected.name}`}
+              icon={selected.isLocked ? Lock : LockOpen}
+              endContent={<Shortcut>⇧⌘L</Shortcut>}
+              value={selected.isLocked}
+              onChange={next => updateSelected({isLocked: next})}
+            />
+          </DropdownMenuSubMenu>
+
+          <DropdownMenuDivider />
+
+          <DropdownMenuSubMenu label="Help">
+            <DropdownMenuItem
+              label="Keyboard shortcuts"
+              endContent={<Shortcut>⌘/</Shortcut>}
+            />
+            <DropdownMenuItem label="Documentation" />
+            <DropdownMenuDivider />
+            <DropdownMenuItem label="About this editor" />
+          </DropdownMenuSubMenu>
+        </DropdownMenu>
+
+        {/*
+          A group, not a nav landmark: a landmark inside a
+          role="toolbar" is not a place a screen reader expects one,
+          and the toolbar already is the region. The group gives the
+          strip a name, and each tab says whether it is the open
+          document with aria-current.
+        */}
+        <HStack
+          role="group"
+          aria-label="Open documents"
+          gap={0}
+          vAlign="center"
+          paddingInline={compactHeader ? 0 : 2}
+          paddingBlock={0.5}
+          isScrollable
+          maxWidth={compactHeader ? 96 : TAB_MAX_WIDTH}
+          xstyle={styles.tabStrip}>
+          <DocumentTab tab={{id: 'contract', name: title, icon: FileIcon}}
+            isActive onSelect={() => contractEditor?.commands.focus()}
+            onClose={() => location.assign('/')} />
+        </HStack>
+      </HStack>
+    ),
+    end: (
+      <HStack gap={3} vAlign="center">
+        {syncStatus && (compactHeader
+          ? <VisuallyHidden as="span" role="status">{syncStatus}</VisuallyHidden>
+          : <Text type="supporting" color="secondary" role="status">{syncStatus}</Text>)}
+        <DropdownMenu button={{label: 'Export', variant: 'ghost', size: 'sm',
+          isIconOnly: compactHeader, tooltip: compactHeader ? 'Export' : undefined,
+          icon: <Icon icon={Download} size={ICON} />}} alignment="end">
+          <DropdownMenuItem label="Share" isDisabled={!onShare} onClick={onShare} />
+          <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare || !onPrepare} onClick={onPrepare} />
+        </DropdownMenu>
+      </HStack>
+    ),
+  };
+
   return (
     // Appearance drives a Theme around the whole editor, and that Theme needs
     // a surface of its own. Panels and toolbars are transparent, so without
@@ -1652,242 +1837,10 @@ export default function CanvasEditor({
     // the new mode's colour — light text on a light page. The Section paints
     // the mode's own background, which is what makes the editor consistent.
     <Theme theme={neutralTheme} mode={appearance}>
-      <Section variant="section" padding={0} height="100%">
+      {renderShell(<Section variant="section" padding={0} height="100%">
         <Layout
           height="fill"
           padding={0}
-          header={
-            // Not a Toolbar. A toolbar is a set of peer commands that arrow
-            // keys walk across, and the document tabs make that wrong twice
-            // over: arrowing off a tab lands on its own close button, and a
-            // strip of documents is not a band of tools. This is the header
-            // slot of the layout it heads, which is what LayoutHeader is.
-            <LayoutHeader
-              hasDivider
-              // 4px on every edge. A toolbar's padding is sized for a band
-              // heading content, and app chrome wants to sit tighter: the
-              // strip inside carries its own 4px around a 28px tab. It also
-              // lands the menu button on the inset a ghost trigger wants, so
-              // nothing has to be pulled back out again.
-              padding={1}
-              xstyle={styles.headerBar}>
-              <HStack gap={0.5} vAlign="center" hAlign="between" wrap="wrap">
-                <HStack gap={0.5} vAlign="center" xstyle={styles.headerLead}>
-                  {/*
-                    One button for every command in the editor, the way a
-                    single-window design tool does it. A menubar spends the
-                    top-left on five words that are only read when someone is
-                    already looking for a command; folding them into submenus
-                    hands that space to the tabs, which are read constantly.
-                    The commands keep their grouping — the bar became the
-                    first level of the menu rather than disappearing.
-                  */}
-                  <DropdownMenu
-                    button={{
-                      label: 'Menu',
-                      tooltip: 'Menu',
-                      variant: 'ghost',
-                      size: 'sm',
-                      isIconOnly: true,
-                      icon: <Icon icon={Menu} size={ICON} />,
-                    }}
-                    hasChevron={false}
-                    // Left to itself the menu matches its trigger, and the
-                    // trigger is a 28px icon button — five one-word rows in a
-                    // column barely wider than the words. A set width gives
-                    // the submenu chevrons somewhere to sit at the far edge,
-                    // which is what makes the rows read as a menu bar folded
-                    // into a list rather than a stack of buttons.
-                    menuWidth={280}>
-                    <DropdownMenuSubMenu label="File">
-                      <DropdownMenuItem label="Back to contracts" href="/" />
-                      <DropdownMenuItem label="Account settings" onClick={onAccountSettings} />
-                    </DropdownMenuSubMenu>
-
-                    <DropdownMenuSubMenu label="Edit">
-                      <DropdownMenuItem
-                        label="Undo"
-                        isDisabled={!editable}
-                        onClick={() => contractEditor?.chain().focus().undo().run()}
-                        endContent={<Shortcut>⌘Z</Shortcut>}
-                      />
-                      <DropdownMenuItem
-                        label="Redo"
-                        isDisabled={!editable}
-                        onClick={() => contractEditor?.chain().focus().redo().run()}
-                        endContent={<Shortcut>⇧⌘Z</Shortcut>}
-                      />
-                      <DropdownMenuDivider />
-                      <DropdownMenuItem
-                        label="Cut"
-                        endContent={<Shortcut>⌘X</Shortcut>}
-                      />
-                      <DropdownMenuItem
-                        label="Copy"
-                        endContent={<Shortcut>⌘C</Shortcut>}
-                      />
-                      <DropdownMenuItem
-                        label="Paste"
-                        endContent={<Shortcut>⌘V</Shortcut>}
-                      />
-                      <DropdownMenuDivider />
-                      <DropdownMenuItem
-                        label="Duplicate"
-                        endContent={<Shortcut>⌘D</Shortcut>}
-                      />
-                      {/* Named, because a menu opened from the bar has lost
-                    sight of the rail: the row that would go is worth saying
-                    out loud before a destructive item is clicked. */}
-                      <DropdownMenuItem
-                        label={`Delete ${selected.name}`}
-                        variant="destructive"
-                        endContent={<Shortcut>⌫</Shortcut>}
-                      />
-                      <DropdownMenuSubMenu label="Format text">
-                        <DropdownMenuItem label="Bold" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBold().run()} />
-                        <DropdownMenuItem label="Italic" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleItalic().run()} />
-                        <DropdownMenuItem label="Heading" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleHeading({level: 2}).run()} />
-                        <DropdownMenuItem label="Bulleted list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBulletList().run()} />
-                        <DropdownMenuItem label="Numbered list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleOrderedList().run()} />
-                      </DropdownMenuSubMenu>
-                    </DropdownMenuSubMenu>
-
-                    {/* Checkbox rows, not actions: each reports a state the
-                  user can see on the page, and the menu stays open so all
-                  three can be set in one visit. */}
-                    <DropdownMenuSubMenu label="View">
-                      <DropdownMenuCheckboxItem
-                        label="Left panel"
-                        icon={PanelLeft}
-                        endContent={<Shortcut>⌘B</Shortcut>}
-                        value={chrome.left}
-                        onChange={next => setChrome(c => ({...c, left: next}))}
-                      />
-                      <DropdownMenuCheckboxItem
-                        label="Right panel"
-                        icon={PanelRight}
-                        endContent={<Shortcut>⇧⌘B</Shortcut>}
-                        value={chrome.right}
-                        onChange={next => setChrome(c => ({...c, right: next}))}
-                      />
-                      <DropdownMenuCheckboxItem
-                        label="Canvas tools"
-                        icon={PanelBottom}
-                        endContent={<Shortcut>⌘.</Shortcut>}
-                        value={chrome.toolbar}
-                        onChange={next =>
-                          setChrome(c => ({...c, toolbar: next}))
-                        }
-                      />
-                      <DropdownMenuDivider />
-                      {/* The same value the tool bar's zoom control holds, so
-                    setting it in either place moves the other. */}
-                      <DropdownMenuSubMenu label="Zoom">
-                        <DropdownMenuRadioGroup
-                          label="Zoom"
-                          value={zoom}
-                          onChange={setZoom}>
-                          {ZOOM_OPTIONS.map(option => (
-                            <DropdownMenuRadioItem
-                              key={option.value}
-                              value={option.value}
-                              label={option.label}
-                            />
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuSubMenu>
-                      <DropdownMenuSubMenu label="Appearance">
-                        <DropdownMenuRadioGroup
-                          label="Appearance"
-                          value={appearance}
-                          onChange={next => setAppearance(next as ThemeMode)}>
-                          <DropdownMenuRadioItem value="light" label="Light" />
-                          <DropdownMenuRadioItem value="dark" label="Dark" />
-                          <DropdownMenuRadioItem
-                            value="system"
-                            label="System"
-                          />
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuSubMenu>
-                    </DropdownMenuSubMenu>
-
-                    <DropdownMenuSubMenu label="Object">
-                      <DropdownMenuSubMenu label="Insert">
-                        {INSERT_ITEMS.map(item => (
-                          <DropdownMenuItem
-                            key={item.label}
-                            label={item.label}
-                            icon={item.icon}
-                          />
-                        ))}
-                      </DropdownMenuSubMenu>
-                      <DropdownMenuDivider />
-                      <DropdownMenuItem
-                        label="Bring forward"
-                        endContent={<Shortcut>⌘]</Shortcut>}
-                      />
-                      <DropdownMenuItem
-                        label="Send backward"
-                        endContent={<Shortcut>⌘[</Shortcut>}
-                      />
-                      <DropdownMenuDivider />
-                      {/* The lock the rail row reveals on hover, reached from
-                    the menubar instead — one piece of state, two ways in. */}
-                      <DropdownMenuCheckboxItem
-                        label={`Lock ${selected.name}`}
-                        icon={selected.isLocked ? Lock : LockOpen}
-                        endContent={<Shortcut>⇧⌘L</Shortcut>}
-                        value={selected.isLocked}
-                        onChange={next => updateSelected({isLocked: next})}
-                      />
-                    </DropdownMenuSubMenu>
-
-                    <DropdownMenuDivider />
-
-                    <DropdownMenuSubMenu label="Help">
-                      <DropdownMenuItem
-                        label="Keyboard shortcuts"
-                        endContent={<Shortcut>⌘/</Shortcut>}
-                      />
-                      <DropdownMenuItem label="Documentation" />
-                      <DropdownMenuDivider />
-                      <DropdownMenuItem label="About this editor" />
-                    </DropdownMenuSubMenu>
-                  </DropdownMenu>
-
-                  {/*
-                    A group, not a nav landmark: a landmark inside a
-                    role="toolbar" is not a place a screen reader expects one,
-                    and the toolbar already is the region. The group gives the
-                    strip a name, and each tab says whether it is the open
-                    document with aria-current.
-                  */}
-                  <HStack
-                    role="group"
-                    aria-label="Open documents"
-                    gap={0}
-                    vAlign="center"
-                    paddingInline={2}
-                    paddingBlock={1}
-                    isScrollable
-                    maxWidth={TAB_MAX_WIDTH}
-                    xstyle={styles.tabStrip}>
-                    <DocumentTab tab={{id: 'contract', name: title, icon: FileIcon}}
-                      isActive onSelect={() => contractEditor?.commands.focus()}
-                      onClose={() => location.assign('/')} />
-                  </HStack>
-                </HStack>
-                <HStack gap={3} vAlign="center">
-                  {syncStatus && <Text type="supporting" color="secondary" role="status">{syncStatus}</Text>}
-                  <DropdownMenu button={{label: 'Export', variant: 'ghost', size: 'sm',
-                    icon: <Icon icon={Download} size={ICON} />}} alignment="end">
-                    <DropdownMenuItem label="Share" isDisabled={!onShare} onClick={onShare} />
-                    <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare || !onPrepare} onClick={onPrepare} />
-                  </DropdownMenu>
-                </HStack>
-              </HStack>
-            </LayoutHeader>
-          }
           content={
             <LayoutContent padding={0}>
               <Layout
@@ -2627,7 +2580,7 @@ export default function CanvasEditor({
             </LayoutContent>
           }
         />
-      </Section>
+      </Section>, header)}
     </Theme>
   );
 }
