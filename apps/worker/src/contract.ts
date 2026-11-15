@@ -1,0 +1,384 @@
+import { DurableObject } from 'cloudflare:workers'
+import * as Y from 'yjs'
+import { strToU8, zipSync } from 'fflate'
+import {
+  clientMessage, consentText, consentVersion, freezeContract, inviteEditor, previewContract,
+  redeemInvite, signContract, titleInput,
+} from '@clausid/contracts'
+import type { ContractView, Role, ServerMessage, Signature, Status } from '@clausid/contracts'
+import type { Account, Env } from './http.ts'
+import { artifact, decode, encode, hex, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
+import { validateDraft } from './draft.ts'
+import { renderPdf } from './pdf.ts'
+
+type Member = { id: string; email: string }
+type Invite = { id: string; digest: string; email: string; expires: number; role: 'editor' | 'signer' }
+type Preview = { id: string; revision: number; signers: string[]; digest: string; expires: number }
+type Version = { id: string; digest: string; signers: string[]; frozenAt: string }
+type Mail = { id: string; email: string; token: string; role: Invite['role'] }
+type RecordState = {
+  id: string; title: string; owner: Member; editors: Member[]; signers: Member[]
+  status: Status; revision: number; invites: Invite[]; preview: Preview | null
+  version: Version | null; signatures: Signature[]; outbox: Mail[]; voidedAt?: string
+}
+type Attachment = { account: Account; clientId?: number; clock?: number; cursor?: unknown }
+const absent = () => new HttpError(404, 'Contract unavailable.')
+const day = 86_400_000
+
+export class Contract extends DurableObject<Env> {
+  #state: RecordState | undefined
+  #draft = new Y.Doc()
+  #queue: Promise<unknown> = Promise.resolve()
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY, value TEXT NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, data BLOB NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS edits (id TEXT PRIMARY KEY, revision INTEGER NOT NULL)')
+    const record = ctx.storage.sql.exec<{ value: string }>("SELECT value FROM state WHERE id = 'contract'").toArray()[0]
+    this.#state = record ? JSON.parse(record.value) : undefined
+    const draft = this.#file('draft')
+    if (draft) Y.applyUpdate(this.#draft, draft)
+  }
+
+  #serial<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#queue.then(operation)
+    this.#queue = result.catch(() => undefined)
+    return result
+  }
+  #file(id: string) {
+    const row = this.ctx.storage.sql.exec<{ data: ArrayBuffer }>('SELECT data FROM files WHERE id = ?', id).toArray()[0]
+    return row ? new Uint8Array(new Uint8Array(row.data)) : undefined
+  }
+  #writeFile(id: string, bytes: Uint8Array) {
+    this.ctx.storage.sql.exec('INSERT OR REPLACE INTO files VALUES (?, ?)', id, bytes)
+  }
+  #save(state: RecordState, files?: () => void) {
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO state VALUES ('contract', ?)", JSON.stringify(state))
+      files?.()
+    })
+    this.#state = state
+  }
+  #role(state: RecordState, actor: Account): Role | undefined {
+    if (actor.id === state.owner.id) return 'owner'
+    if (state.status === 'Draft' && state.editors.some((member) => member.id === actor.id)) return 'editor'
+    if (state.signers.some((member) => member.id === actor.id && member.email === actor.email)) return 'signer'
+  }
+  #view(state: RecordState, account: Account): ContractView {
+    const role = this.#role(state, account)
+    if (!role) throw absent()
+    return {
+      id: state.id, title: state.title, status: state.status, revision: state.revision, role,
+      editors: role === 'signer' ? [] : [state.owner, ...state.editors],
+      invites: role === 'owner' && state.status === 'Draft'
+        ? state.invites.filter(({ expires }) => expires > Date.now()).map(({ id, email }) => ({ id, email }))
+        : [],
+      version: state.version && {
+        id: state.version.id, digest: state.version.digest,
+        canSign: state.status === 'Awaiting signatures' && state.version.signers.includes(account.email)
+          && !state.signatures.some(({ email }) => email === account.email),
+        signers: state.version.signers.map((email) => ({
+          email, signedAt: state.signatures.find((entry) => entry.email === email)?.signedAt ?? null,
+        })),
+      },
+    }
+  }
+  #send(socket: WebSocket, message: ServerMessage) {
+    try { socket.send(JSON.stringify(message)) } catch { /* A closing socket reconnects from persisted state. */ }
+  }
+  #publish(state: RecordState) {
+    for (const socket of this.ctx.getWebSockets()) {
+      const { account } = socket.deserializeAttachment() as Attachment
+      if (!this.#role(state, account)) socket.close(4003, 'Access ended')
+      else if (account.expires <= Date.now()) socket.close(4012, 'Refresh session')
+      else this.#send(socket, { type: 'state', contract: this.#view(state, account) })
+    }
+  }
+  #presence(attachment: Attachment, gone = false): ServerMessage | undefined {
+    if (attachment.clientId === undefined || attachment.clock === undefined) return
+    const colors = ['#1d6494', '#9b3e62', '#47661f', '#7c4b99', '#9b501b']
+    return {
+      type: 'presence', clientId: attachment.clientId, clock: attachment.clock + Number(gone),
+      state: gone ? null : {
+        user: { name: attachment.account.name.slice(0, 80), color: colors[attachment.clientId % colors.length] },
+        cursor: attachment.cursor,
+      },
+    }
+  }
+  #broadcast(message: ServerMessage, sender: WebSocket) {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === sender) continue
+      const { account } = socket.deserializeAttachment() as Attachment
+      if (account.expires > Date.now() && this.#state?.status === 'Draft' && this.#role(this.#state, account)) {
+        this.#send(socket, message)
+      }
+    }
+  }
+
+  fetch(request: Request) {
+    return this.#serial(() => safeResponse(() => this.#route(request)))
+  }
+
+  async #route(request: Request): Promise<Response> {
+    const { pathname } = new URL(request.url)
+    const account: Account = JSON.parse(decodeURIComponent(request.headers.get('x-clausid-account')!))
+    const contractId = request.headers.get('x-clausid-contract')!
+    const action = pathname.slice(1)
+    let state = this.#state
+    if (action === 'create' || action === 'create-copy') {
+      if (state) {
+        if (state.owner.id !== account.id) throw absent()
+        return Response.json(this.#view(state, account))
+      }
+      const body = await readJson(request, action === 'create-copy' ? 750_000 : 16_384) as { title?: unknown; draft?: string }
+      const title = titleInput.parse(body.title)
+      const owner = { id: account.id, email: account.email }
+      state = { id: contractId, title, owner, status: 'Draft', editors: [], signers: [],
+        revision: 0, invites: [], preview: null, version: null, signatures: [], outbox: [] }
+      if (action === 'create-copy' && body.draft) Y.applyUpdate(this.#draft, decode(body.draft))
+      else this.#draft.getXmlFragment('default').insert(0, [new Y.XmlElement('paragraph')])
+      this.#save(state, () => this.#writeFile('draft', Y.encodeStateAsUpdate(this.#draft)))
+      return Response.json(this.#view(state, account), { status: 201 })
+    }
+    if (!state) throw absent()
+    if (action === 'redeem') {
+      const { token } = redeemInvite.parse(await readJson(request))
+      const digest = await sha256(new TextEncoder().encode(token))
+      const invite = state.invites.find((item) => item.digest === digest && item.email === account.email && item.expires > Date.now())
+      if (!invite || state.status !== (invite.role === 'editor' ? 'Draft' : 'Awaiting signatures')) {
+        throw new HttpError(404, 'This invitation is unavailable for your verified email.')
+      }
+      const directory = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(account.id))
+      const registered = await directory.fetch('https://directory/' + state.id, { method: 'PUT' })
+      if (!registered.ok) throw new HttpError(503, 'Contract directory is temporarily unavailable.')
+      const members = invite.role === 'editor' ? 'editors' : 'signers'
+      const member = { id: account.id, email: account.email }
+      this.#save({ ...state, [members]: [...state[members].filter(({ id }) => id !== account.id), member],
+        invites: state.invites.filter(({ id }) => id !== invite.id),
+        outbox: state.outbox.filter(({ id }) => id !== invite.id) })
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
+
+    const view = this.#view(state, account)
+    if (action === 'view') return Response.json(view)
+    if (action === 'socket') {
+      if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') throw new HttpError(426, 'WebSocket required.')
+      const pair = new WebSocketPair()
+      const [client, socket] = Object.values(pair)
+      this.ctx.acceptWebSocket(socket)
+      socket.serializeAttachment({ account } satisfies Attachment)
+      this.#send(socket, { type: 'state', contract: view,
+        draft: state.status === 'Draft' ? encode(Y.encodeStateAsUpdate(this.#draft)) : undefined })
+      if (state.status === 'Draft') {
+        for (const other of this.ctx.getWebSockets()) {
+          if (other === socket) continue
+          const attachment = other.deserializeAttachment() as Attachment
+          if (attachment.account.expires <= Date.now() || !this.#role(state, attachment.account)) continue
+          const presence = this.#presence(attachment)
+          if (presence) this.#send(socket, presence)
+        }
+      }
+      await this.#schedule()
+      return new Response(null, { status: 101, webSocket: client })
+    }
+    if (action === 'pdf' && state.version) {
+      return artifact(this.#file('frozen')!, 'application/pdf', 'contract.pdf', false)
+    }
+    if (action === 'evidence' && state.status === 'Signed' && state.version) {
+      const manifest = {
+        contractId: state.id, title: state.title, versionId: state.version.id, sha256: state.version.digest,
+        frozenAt: state.version.frozenAt, requiredSigners: state.version.signers,
+        consent: { version: consentVersion, text: consentText }, signatures: state.signatures,
+      }
+      return artifact(new Uint8Array(zipSync({
+        'contract.pdf': this.#file('frozen')!,
+        'signing-evidence.json': strToU8(JSON.stringify(manifest, null, 2)),
+      })), 'application/zip', 'clausid-signing-evidence.zip', true)
+    }
+    if (action === 'sign') {
+      const body = signContract.parse(await readJson(request))
+      if (!state.version || body.versionId !== state.version.id || body.digest !== state.version.digest) {
+        throw new HttpError(409, 'Refresh and review the frozen version.')
+      }
+      const previous = state.signatures.find(({ email }) => email === account.email)
+      if (previous?.accountId === account.id && previous.name === body.name) return Response.json(view)
+      if (!view.version?.canSign) throw new HttpError(409, 'This signature is unavailable.')
+      if (Date.now() - account.createdAt > 10 * 60_000) throw new HttpError(428, 'Sign out and sign back in before signing.')
+      const signature: Signature = {
+        accountId: account.id, email: account.email, name: body.name, versionId: body.versionId,
+        digest: body.digest, signedAt: new Date().toISOString(), consentVersion,
+      }
+      const signatures = [...state.signatures, signature]
+      this.#save({ ...state, signatures, status: signatures.length === state.version.signers.length ? 'Signed' : state.status })
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
+    if (view.role !== 'owner') throw absent()
+    if (action === 'copy-source' && state.status === 'Voided') {
+      return Response.json({ title: state.title, draft: encode(Y.encodeStateAsUpdate(this.#draft)) })
+    }
+    if (action === 'void' && state.status === 'Awaiting signatures') {
+      this.#save({ ...state, status: 'Voided', invites: [], outbox: [], voidedAt: new Date().toISOString() })
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
+    if (state.status !== 'Draft') throw new HttpError(409, 'This contract is no longer a draft.')
+    if (action === 'invite') {
+      const { email } = inviteEditor.parse(await readJson(request))
+      if ([state.owner, ...state.editors].some((member) => member.email === email)) {
+        throw new HttpError(409, 'This person already has access.')
+      }
+      const invites = state.invites.filter((item) => item.email !== email && item.expires > Date.now())
+      if (invites.length + state.editors.length >= 40) throw new HttpError(409, 'The collaborator limit is 40.')
+      const { invite, mail } = await this.#makeInvite(email, 'editor')
+      await this.ctx.storage.setAlarm(Date.now() + 100)
+      this.#save({ ...state, invites: [...invites, invite],
+        outbox: [...state.outbox.filter((item) => item.email !== email), mail] })
+    } else if (action.startsWith('revoke/')) {
+      const id = action.slice('revoke/'.length)
+      this.#save({ ...state, editors: state.editors.filter((item) => item.id !== id),
+        invites: state.invites.filter((item) => item.id !== id), outbox: state.outbox.filter((item) => item.id !== id) })
+    } else if (action === 'preview') {
+      const { revision, signers } = previewContract.parse(await readJson(request))
+      if (revision !== state.revision) throw new HttpError(409, 'The draft changed. Review the latest version.')
+      const bytes = await renderPdf(state.title, this.#draft)
+      const preview = { id: crypto.randomUUID(), revision, signers, digest: await sha256(bytes), expires: Date.now() + 15 * 60_000 }
+      this.#save({ ...state, preview }, () => this.#writeFile('preview', bytes))
+      return Response.json({ id: preview.id, digest: preview.digest })
+    } else if (action.startsWith('preview/')) {
+      if (state.preview?.id !== action.slice('preview/'.length) || state.preview.expires <= Date.now()
+        || state.preview.revision !== state.revision) throw new HttpError(409, 'Generate a new preview.')
+      return artifact(this.#file('preview')!, 'application/pdf', 'contract-preview.pdf', false)
+    } else if (action === 'freeze') {
+      const { previewId } = freezeContract.parse(await readJson(request))
+      const preview = state.preview
+      if (!preview || preview.id !== previewId || preview.revision !== state.revision || preview.expires <= Date.now()) {
+        throw new HttpError(409, 'The draft or preview changed. Generate and review a new preview.')
+      }
+      const bytes = this.#file('preview')!
+      const recipients = await Promise.all(preview.signers.filter((email) => email !== state.owner.email)
+        .map((email) => this.#makeInvite(email, 'signer')))
+      if (recipients.length) await this.ctx.storage.setAlarm(Date.now() + 100)
+      const version = { id: previewId, digest: preview.digest, signers: preview.signers, frozenAt: new Date().toISOString() }
+      this.#save({ ...state, preview: null, version, status: 'Awaiting signatures',
+        invites: recipients.map(({ invite }) => invite), outbox: recipients.map(({ mail }) => mail) }, () => {
+        this.#writeFile('frozen', bytes)
+        this.ctx.storage.sql.exec("DELETE FROM files WHERE id = 'preview'")
+      })
+    } else {
+      throw absent()
+    }
+    this.#publish(this.#state!)
+    return Response.json(this.#view(this.#state!, account))
+  }
+
+  async #makeInvite(email: string, role: Invite['role']) {
+    const token = hex(crypto.getRandomValues(new Uint8Array(32)))
+    const id = crypto.randomUUID()
+    const expires = Date.now() + 7 * day
+    const digest = await sha256(new TextEncoder().encode(token))
+    return { invite: { id, email, digest, expires, role }, mail: { id, email, token, role } }
+  }
+  async #schedule() {
+    const now = Date.now()
+    const wake = this.#state?.outbox.length ? now + 60_000 : Infinity
+    const expiryCheck = this.ctx.getWebSockets().length ? now + 30_000 : Infinity
+    const next = Math.min(wake, expiryCheck)
+    const existing = await this.ctx.storage.getAlarm()
+    if (Number.isFinite(next) && (existing === null || existing > next)) await this.ctx.storage.setAlarm(next)
+  }
+  alarm() {
+    return this.#serial(async () => {
+      for (const socket of this.ctx.getWebSockets()) {
+        const { account } = socket.deserializeAttachment() as Attachment
+        if (account.expires <= Date.now()) socket.close(4012, 'Refresh session')
+      }
+      let state = this.#state
+      for (const mail of state?.outbox ?? []) {
+        if (!state) break
+        const invite = state.invites.find(({ id }) => id === mail.id)
+        if (invite && invite.expires > Date.now()) {
+          try {
+            const response = await internal(this.env, '/internal/invite', {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ ...mail, contractId: state.id }),
+            })
+            if (!response.ok) throw new Error('Mail rejected')
+          } catch {
+            console.error('Contract invitation delivery failed')
+            continue
+          }
+        }
+        state = { ...state, outbox: state.outbox.filter(({ id }) => id !== mail.id) }
+        this.#save(state)
+      }
+      await this.#schedule()
+    })
+  }
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    return this.#serial(async () => {
+      const attachment = socket.deserializeAttachment() as Attachment
+      const state = this.#state
+      if (!state || !this.#role(state, attachment.account)) {
+        socket.close(4003, 'Access ended')
+        return
+      }
+      if (attachment.account.expires <= Date.now()) {
+        socket.close(4012, 'Refresh session')
+        return
+      }
+      if (state.status !== 'Draft' || typeof message !== 'string' || message.length > 360_000) {
+        this.#send(socket, { type: 'error', message: 'The draft is unavailable or the update is too large.' })
+        return
+      }
+      try {
+        const incoming = clientMessage.parse(JSON.parse(message))
+        if (incoming.type === 'presence') {
+          if ((attachment.clientId !== undefined && attachment.clientId !== incoming.clientId)
+            || (attachment.clock ?? -1) >= incoming.clock
+            || JSON.stringify(incoming.cursor).length > 1_200) return
+          if (this.ctx.getWebSockets().some((other) => other !== socket
+            && (other.deserializeAttachment() as Attachment).clientId === incoming.clientId)) return
+          Object.assign(attachment, { clientId: incoming.clientId, clock: incoming.clock, cursor: incoming.cursor })
+          socket.serializeAttachment(attachment)
+          this.#broadcast(this.#presence(attachment)!, socket)
+          return
+        }
+        const previous = this.ctx.storage.sql.exec<{ revision: number }>(
+          'SELECT revision FROM edits WHERE id = ?', incoming.id).toArray()[0]
+        if (previous) {
+          this.#send(socket, { type: 'ack', id: incoming.id, revision: state.revision })
+          return
+        }
+        const draft = new Y.Doc()
+        try {
+          Y.applyUpdate(draft, Y.encodeStateAsUpdate(this.#draft))
+          Y.applyUpdate(draft, decode(incoming.update))
+          const bytes = Y.encodeStateAsUpdate(draft)
+          if (bytes.length > 524_288 || draft.store.pendingStructs || draft.store.pendingDs) {
+            throw new HttpError(422, 'The draft reached its size limit or the update is incomplete.')
+          }
+          validateDraft(draft)
+          const revision = state.revision + 1
+          this.#save({ ...state, revision, preview: null }, () => {
+            this.#writeFile('draft', bytes)
+            this.ctx.storage.sql.exec('INSERT INTO edits VALUES (?, ?)', incoming.id, revision)
+            this.ctx.storage.sql.exec("DELETE FROM files WHERE id = 'preview'")
+          })
+          Y.applyUpdate(this.#draft, bytes)
+          this.#send(socket, { type: 'ack', id: incoming.id, revision })
+          this.#broadcast({ type: 'edit', id: incoming.id, revision, update: incoming.update }, socket)
+        } finally { draft.destroy() }
+      } catch (error) {
+        this.#send(socket, { type: 'error', message: error instanceof HttpError ? error.message : 'The draft update could not be saved.' })
+      }
+    })
+  }
+  webSocketClose(socket: WebSocket) {
+    const presence = this.#presence(socket.deserializeAttachment() as Attachment, true)
+    if (presence) this.#broadcast(presence, socket)
+  }
+  webSocketError(socket: WebSocket) { this.webSocketClose(socket) }
+}

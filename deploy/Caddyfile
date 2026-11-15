@@ -1,0 +1,19 @@
+{$PUBLIC_HOST} {
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "SAMEORIGIN"
+  }
+  @api path /api/* /healthz
+  handle @api {
+    reverse_proxy worker:8787 {
+      header_up X-Clausid-Client-IP {http.request.remote.host}
+    }
+  }
+  handle {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+  }
+}

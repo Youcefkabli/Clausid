@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "name": "@clausid/contracts",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

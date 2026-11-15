@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./apps/auth"
+    },
+    {
+      "path": "./apps/worker"
+    },
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./tsconfig.test.json"
+    }
+  ]
+}

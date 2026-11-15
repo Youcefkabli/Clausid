@@ -1,0 +1,71 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: web
+    environment:
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - worker
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    command:
+      - apps/worker/node_modules/workerd/bin/workerd
+      - serve
+      - deploy/workerd.capnp
+      - --socket-addr
+      - http=0.0.0.0:8787
+      - --external-addr
+      - auth=auth:8788
+      - --directory-path
+      - contractDisk=/var/lib/clausid/contracts
+    environment:
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://localhost}"
+      INTERNAL_AUTH_KEY: "${INTERNAL_AUTH_KEY:-}"
+    volumes:
+      - contracts:/var/lib/clausid/contracts
+    depends_on:
+      - auth
+  auth:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    working_dir: /app/apps/auth
+    command: ["sh", "-ec", "node src/migrate.ts && exec node src/server.ts"]
+    environment:
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://localhost}"
+      AUTH_HOST: "0.0.0.0"
+      AUTH_DB_PATH: /var/lib/clausid/auth/auth.sqlite
+      INTERNAL_AUTH_KEY: "${INTERNAL_AUTH_KEY:-}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-}"
+      MAIL_FROM: "${MAIL_FROM:-Clausid <mail@localhost.test>}"
+      SMTP_HOST: "${SMTP_HOST:-mailpit}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_SECURE: "${SMTP_SECURE:-false}"
+      SMTP_REQUIRE_TLS: "${SMTP_REQUIRE_TLS:-false}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+    volumes:
+      - auth:/var/lib/clausid/auth
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    profiles: [dev]
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+volumes:
+  caddy_data:
+  caddy_config:
+  auth:
+  contracts:

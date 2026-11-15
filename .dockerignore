@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.data
+.pnpm-store
+.env*
+test-results
+playwright-report

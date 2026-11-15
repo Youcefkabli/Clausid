@@ -1,0 +1,85 @@
+.page-content {
+  max-width: 1200px;
+  margin-inline: auto;
+  padding: clamp(16px, 4vw, 40px);
+}
+
+.auth-panel {
+  max-width: 440px;
+  margin-inline: auto;
+}
+
+.flow, form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+form {
+  justify-items: start;
+}
+
+.actions, .contract-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.template-form {
+  justify-items: stretch;
+}
+
+.contract-top .actions {
+  margin-inline-start: auto;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: 16px;
+  align-items: start;
+}
+
+.people li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tiptap {
+  min-height: 50vh;
+  overflow-wrap: anywhere;
+}
+
+/* Tiptap renders carets as inline decorations, outside Astryx components. */
+.collaboration-carets__caret {
+  position: relative;
+  border-inline-start: 1px solid;
+  pointer-events: none;
+}
+
+.collaboration-carets__label {
+  position: absolute;
+  inset-block-start: -1.4em;
+  inset-inline-start: -1px;
+  color: white;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+
+iframe {
+  width: 100%;
+  height: 65vh;
+}
+
+.preview-frame {
+  height: 44vh;
+}
+
+@media (max-width: 780px) {
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
