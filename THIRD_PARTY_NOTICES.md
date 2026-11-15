@@ -1,6 +1,6 @@
 # Third-party notices
 
-The web app adapts the Login Card, Table, and Form Wizard Dialog templates from [Astryx](https://github.com/meta/astryx), distributed under the MIT License.
+The web app adapts the Login Card, Table, Form Wizard Dialog, and Settings Dialog templates from [Astryx](https://github.com/meta/astryx), distributed under the MIT License.
 
 MIT License
 

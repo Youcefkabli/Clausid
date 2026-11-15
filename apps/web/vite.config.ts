@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite-plus'
 import react from '@vitejs/plugin-react'
+import stylex from '@stylexjs/unplugin'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [stylex.vite({ useCSSLayers: true, runtimeInjection: false }), react()],
   resolve: { dedupe: ['react', 'react-dom', 'yjs', 'y-protocols', 'lib0'] },
   server: {
     port: 5173,
