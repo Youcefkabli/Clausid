@@ -43,6 +43,7 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [error, setError] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
   const [share, setShare] = useState(false)
+  const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string; canManage: boolean }>()
   const [prepare, setPrepare] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
   const [preview, setPreview] = useState<(Preview & { signers: string[] }) | null>(null)
@@ -76,6 +77,15 @@ export function ContractPage({ id, account, store, renderPage }: {
       room.awareness.destroy(); room.document.destroy(); clearProjection(store, id)
     }
   }, [id, room, store])
+
+  useEffect(() => {
+    if (contract?.role !== 'owner') return
+    const abort = new AbortController()
+    void api<{ workspaceId?: string; canManage: boolean }>('/' + id + '/workspace', undefined, abort.signal)
+      .then((entry) => { if (!abort.signal.aborted) setSharingAccess(entry) })
+      .catch((reason) => { if (!abort.signal.aborted) setError(errorMessage(reason)) })
+    return () => abort.abort()
+  }, [id, contract?.role])
 
   const path = '/' + id + '/'
   const file = '/api/contracts' + path
@@ -116,7 +126,8 @@ export function ContractPage({ id, account, store, renderPage }: {
   if (!contract) return renderPage(!error ? <p role="status">Opening contract…</p> : alerts)
   const draft = contract.status === 'Draft'
   const owner = contract.role === 'owner'
-  const canPrepare = connection.ready && !connection.error && connection.pending === 0
+  const canManage = owner && sharingAccess?.canManage
+  const canPrepare = canManage && connection.ready && !connection.error && connection.pending === 0
   const canEdit = draft && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => { setError(''); setNotice(''); set(true) }
@@ -128,6 +139,12 @@ export function ContractPage({ id, account, store, renderPage }: {
   const dialogs = <>
     <Dialog isOpen={share && draft && !connection.ended} onOpenChange={(open) => { setShare(open); if (!open) setError('') }} aria-label="Share contract">
       <div className="flow"><Heading level={2}>Share contract</Heading>
+      {sharingAccess?.workspaceId && <div className="flow">
+        <Text>Give the current workspace parties access to edit this draft.</Text>
+        <div><Button label="Share with workspace" isDisabled={busy} clickAction={async () => {
+          if (await mutate('share-workspace')) setNotice('Workspace parties can now edit this draft.')
+        }} /></div>
+      </div>}
       <form onSubmit={async (event) => {
         event.preventDefault()
         const form = event.currentTarget
@@ -209,9 +226,9 @@ export function ContractPage({ id, account, store, renderPage }: {
           syncStatus={draft && !connection.ended ? (
             !connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved'
           ) : undefined}
-          onShare={draft && owner && !connection.ended ? () => openModal(setShare) : undefined}
-          onPrepare={draft && owner && !connection.ended ? () => openModal(setPrepare) : undefined}
-          canPrepare={canPrepare}
+          onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
+          onPrepare={draft && canManage && !connection.ended ? () => openModal(setPrepare) : undefined}
+          canPrepare={Boolean(canPrepare)}
           onAccountSettings={() => setAccountOpen(true)} />
       </div>
       {dialogs}
@@ -225,7 +242,7 @@ export function ContractPage({ id, account, store, renderPage }: {
       <Badge label={contract.status} variant={statusVariant[contract.status]} />
       <div className="actions">
         {owner && contract.status === 'Awaiting signatures' && <Button label="Void contract" onClick={() => openModal(setVoidOpen)} />}
-        {owner && contract.status === 'Voided' && <Button label="Duplicate as draft" clickAction={async () => {
+        {canManage && contract.status === 'Voided' && <Button label="Duplicate as draft" clickAction={async () => {
           const copy = await mutate('duplicate', { title: contract.title, requestId: copyId })
           if (copy) location.assign('/contracts/' + copy.id)
         }} />}

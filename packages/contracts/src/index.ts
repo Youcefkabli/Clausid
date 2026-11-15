@@ -12,7 +12,13 @@ export const createWorkspace = z.object({
   slug: workspaceSlug.optional(),
   description: z.string().trim().max(500).default(''),
 })
-export type Workspace = { id: string; name: string; description: string; slug?: string | null }
+export type Workspace = { id: string; name: string; description: string; slug?: string | null; role?: 'owner' | 'member' }
+
+export type WorkspaceParties = {
+  role: 'owner' | 'member'
+  parties: { id: string; email: string }[]
+  invitations: string[]
+}
 
 export const inviteEditor = z.object({ email: emailAddress })
 export const redeemInvite = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) })

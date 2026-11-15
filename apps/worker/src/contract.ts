@@ -225,6 +225,30 @@ export class Contract extends DurableObject<Env> {
       return Response.json(this.#view(this.#state!, account))
     }
     if (state.status !== 'Draft') throw new HttpError(409, 'This contract is no longer a draft.')
+    if (action === 'share-workspace') {
+      const { workspaceId, members } = await readJson(request) as {
+        workspaceId: string; members: Member[];
+      }
+      const additions = members.filter(({ id }) => id !== account.id && !state.editors.some((editor) => editor.id === id))
+      if (members.every(({ id }) => id === account.id)) throw new HttpError(409, 'Invite a party to the workspace first.')
+      const invites = state.invites.filter(({ email, expires }) => expires > Date.now()
+        && !additions.some((member) => member.email === email))
+      if (state.editors.length + additions.length + invites.length > 40) {
+        throw new HttpError(409, 'The collaborator limit is 40.')
+      }
+      for (const member of members.filter(({ id }) => id !== account.id)) {
+        const target = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(member.id))
+        const register = new URL('https://directory/' + state.id)
+        register.searchParams.set('workspace', workspaceId)
+        register.searchParams.set('attach', '1')
+        const result = await target.fetch(register, { method: 'PUT' })
+        if (!result.ok) throw new HttpError(503, 'A party’s contract directory is temporarily unavailable.')
+      }
+      this.#save({ ...state, editors: [...state.editors, ...additions], invites,
+        outbox: state.outbox.filter(({ email }) => !additions.some((member) => member.email === email)) })
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
     if (action === 'invite') {
       const { email } = inviteEditor.parse(await readJson(request))
       if ([state.owner, ...state.editors].some((member) => member.email === email)) {

@@ -8,6 +8,10 @@ Clausid is a self-hosted web application for drafting contracts together and col
 - Select signers, review the exact PDF, then freeze and send it for signing.
 - Collect typed signatures with recorded consent and download an evidence bundle containing the frozen PDF, its SHA-256 digest, and signing records.
 
+## Workspace workflow
+
+Sign in to open **Workspaces**. Create a workspace and use **Share workspace** to invite parties by verified email. The workspace creator is the service provider. Only the service provider can use **Add document** to start a private draft and choose **Export → Share → Share with workspace** to give current parties live editing access. Parties negotiate by editing the same draft. The service provider reviews and approves the frozen version for signing.
+
 ## Develop locally
 
 Use the Node version in `.node-version`, pnpm 10.33.0, and Mailpit. Run `corepack enable` if pnpm is unavailable.

@@ -39,10 +39,11 @@ const server = createServer(async (request, response) => {
         chunks.push(chunk)
       }
       const { email, contractId, token, role } = JSON.parse(Buffer.concat(chunks).toString())
-      const url = new URL(`/invite/${contractId}`, origin)
+      const url = new URL(`/${role === 'workspace' ? 'workspace-invite' : 'invite'}/${contractId}`, origin)
       const fragment = new URLSearchParams({ token })
       url.hash = fragment.toString()
-      await sendMail(email, role === 'signer' ? 'You have a Clausid contract to sign' : 'You are invited to edit a Clausid contract',
+      await sendMail(email, role === 'workspace' ? 'You are invited to a Clausid workspace'
+        : role === 'signer' ? 'You have a Clausid contract to sign' : 'You are invited to edit a Clausid contract',
         `Open this invitation and sign in with the verified email address it was sent to.\n\n${url.href}`)
       response.writeHead(204).end()
       return

@@ -2,8 +2,8 @@ import { expect } from '@playwright/test'
 
 const mailpit = 'http://127.0.0.1:8025'
 
-export async function linkFor(email: string, kind: 'verify' | 'invite', exclude?: string) {
-  const path = kind === 'verify' ? '/api/auth/verify-email' : '/invite/'
+export async function linkFor(email: string, kind: 'verify' | 'invite' | 'workspace', exclude?: string) {
+  const path = kind === 'verify' ? '/api/auth/verify-email' : kind === 'workspace' ? '/workspace-invite/' : '/invite/'
   let link: string | undefined
   await expect.poll(async () => {
     const search = new URL('/api/v1/search', mailpit)

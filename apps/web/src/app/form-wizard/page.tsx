@@ -449,7 +449,7 @@ export default function FormWizardPage() {
                 <Heading level={2}>Workspace details</Heading>
                 <Text type="supporting" color="secondary">
                   Name your workspace and choose its URL. Region and access choices preview the template.
-                  This deployment stores data locally and creates a personal workspace.
+                  This deployment stores data locally. Your workspace starts private until you invite parties.
                 </Text>
               </VStack>
               {/* FormLayout, not a VStack: form fields are the one case where
@@ -534,7 +534,7 @@ export default function FormWizardPage() {
                 <Heading level={2}>Invite your team</Heading>
                 <Text type="supporting" color="secondary">
                   Preview teammate invitations and roles, or skip this step.
-                  Clausid sends collaboration invitations from individual contracts.
+                  You can send workspace invitations after creating the workspace.
                 </Text>
               </VStack>
               {/* Nothing on this step is required, and under

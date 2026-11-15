@@ -12,7 +12,7 @@ const post = (request: APIRequestContext, path: string, data: object) =>
 
 async function account(page: Page, name: string, email: string) {
   await page.goto('/')
-  await page.getByRole('link', { name: 'Create an account' }).click()
+  await page.getByRole('link', { name: 'Sign up' }).click()
   await page.getByLabel(/^Name\b/).fill(name)
   await page.getByLabel(/^Email\b/).fill(email)
   await page.getByLabel(/^Password\b/).fill(password)
@@ -21,8 +21,8 @@ async function account(page: Page, name: string, email: string) {
   await page.goto(await linkFor(email, 'verify'))
   await page.getByLabel(/^Email\b/).fill(email)
   await page.getByLabel(/^Password\b/).fill(password)
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Contracts', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Login', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Workspaces', exact: true })).toBeVisible()
 }
 
 test('verified users collaborate, freeze an exact PDF, and sign with evidence', async ({ browser }) => {
@@ -65,7 +65,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       title: 'Unauthorized workspace contract', requestId: crypto.randomUUID(), workspaceId,
     })
     expect(inaccessibleWorkspace.status()).toBe(404)
-    await first.getByRole('button', { name: 'New contract' }).click()
+    await first.getByRole('button', { name: 'Add document' }).click()
     await first.getByLabel('Contract title').fill('Services agreement')
     await first.getByRole('button', { name: 'Create contract', exact: true }).click()
     await expect(first.getByRole('textbox', { name: 'Contract document' })).toBeVisible()
@@ -180,5 +180,69 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
   } finally {
     await owner.close()
     await editor.close()
+  }
+})
+
+test('only the service provider can share a workspace draft and approve it for signing', async ({ browser }) => {
+  const firstContext = await browser.newContext()
+  const secondContext = await browser.newContext()
+  const owner = await firstContext.newPage()
+  const party = await secondContext.newPage()
+  const suffix = crypto.randomUUID().slice(0, 8)
+  const ownerEmail = 'workspace-owner-' + suffix + '@example.com'
+  const partyEmail = 'workspace-party-' + suffix + '@example.com'
+  const id = crypto.randomUUID()
+  try {
+    await Promise.all([account(owner, 'Service Provider', ownerEmail), account(party, 'Negotiating Party', partyEmail)])
+    const created = await post(owner.request, '/api/workspaces', { name: 'Negotiation workspace', requestId: id })
+    expect(created.ok()).toBe(true)
+    await owner.goto('/')
+    await owner.getByRole('link', { name: 'Negotiation workspace', exact: true }).click()
+    await owner.getByRole('button', { name: 'Share workspace' }).click()
+    await owner.getByLabel('Party email').fill(partyEmail)
+    await owner.getByRole('button', { name: 'Invite party' }).click()
+    await expect(owner.getByText('Workspace invitation sent.')).toBeVisible()
+    const invitation = await linkFor(partyEmail, 'workspace')
+    const token = new URLSearchParams(new URL(invitation).hash.slice(1)).get('token')
+    expect((await post(owner.request, '/api/workspaces/' + id + '/redeem', { token })).status()).toBe(404)
+    await party.goto(invitation)
+    await party.getByRole('button', { name: 'Accept invitation' }).click()
+    await expect(party.getByRole('heading', { name: 'Negotiation workspace' })).toBeVisible()
+    await expect(party.getByRole('button', { name: 'Add document' })).toHaveCount(0)
+    expect((await post(party.request, '/api/contracts', {
+      title: 'Unauthorized draft', requestId: crypto.randomUUID(), workspaceId: id,
+    })).status()).toBe(403)
+    await owner.goto('/?workspace=' + id)
+    await owner.getByRole('button', { name: 'Add document' }).click()
+    await owner.getByLabel('Contract title').fill('Draft proposal')
+    await owner.getByRole('button', { name: 'Create contract' }).click()
+    const ownerEditor = owner.getByRole('textbox', { name: 'Contract document' })
+    await expect(ownerEditor).toBeVisible()
+    const contractPath = new URL(owner.url()).pathname
+    await ownerEditor.focus()
+    await owner.keyboard.insertText('Proposed payment term: 30 days.')
+    await expect(owner.getByText('Saved', { exact: true })).toBeVisible()
+    expect((await party.request.get(origin + '/api' + contractPath)).status()).toBe(404)
+    await expect(party.getByRole('heading', { name: 'No contracts yet' })).toBeVisible()
+    await owner.getByRole('button', { name: 'Export', exact: true }).click()
+    await owner.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await owner.getByRole('button', { name: 'Share with workspace' }).click()
+    await expect(owner.getByText('Workspace parties can now edit this draft.')).toBeVisible()
+    await owner.getByRole('button', { name: 'Done', exact: true }).click()
+    await party.getByRole('link', { name: 'Draft proposal', exact: true }).click()
+    const partyEditor = party.getByRole('textbox', { name: 'Contract document' })
+    await expect(partyEditor).toContainText('Proposed payment term: 30 days.')
+    await partyEditor.press('End')
+    await party.keyboard.insertText(' Counterproposal: 45 days.')
+    await expect(ownerEditor).toContainText('Counterproposal: 45 days.')
+    await party.getByRole('button', { name: 'Export', exact: true }).click()
+    await expect(party.getByRole('menuitem', { name: 'Share', exact: true })).toBeDisabled()
+    await expect(party.getByRole('menuitem', { name: 'Prepare for signing', exact: true })).toBeDisabled()
+    for (const action of ['share-workspace', 'invite', 'preview', 'freeze']) {
+      expect((await post(party.request, '/api' + contractPath + '/' + action, {})).status()).toBe(403)
+    }
+  } finally {
+    await firstContext.close()
+    await secondContext.close()
   }
 })

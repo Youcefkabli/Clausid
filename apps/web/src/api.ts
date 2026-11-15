@@ -16,4 +16,6 @@ export const api = <T>(path: string, body?: object, signal?: AbortSignal) =>
   request<T>('/api/contracts' + path, body, signal)
 export const workspaceApi = <T>(body?: object, signal?: AbortSignal) =>
   request<T>('/api/workspaces', body, signal)
+export const workspaceAction = <T>(id: string, action: string, body?: object, signal?: AbortSignal) =>
+  request<T>('/api/workspaces/' + id + '/' + action, body, signal)
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'The request failed.'

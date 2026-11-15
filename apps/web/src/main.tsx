@@ -1,3 +1,4 @@
+import { WorkspacePartiesDialog } from './workspace-parties.tsx'
 import WorkspaceWizard from './app/form-wizard/page.tsx'
 import LoginCard from './app/login-card/page.tsx'
 import { AccountSettings } from './account-settings.tsx'
@@ -22,7 +23,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { Theme } from '@astryxdesign/core/theme'
 import { neutralTheme } from '@astryxdesign/theme-neutral/built'
 import type { ContractView, Summary, Workspace } from '@clausid/contracts'
-import { api, ApiError, authClient, errorMessage, workspaceApi } from './api.ts'
+import { api, ApiError, authClient, errorMessage, workspaceApi, workspaceAction } from './api.ts'
 import { openStore, project, useProjection } from './store.ts'
 import { statusVariant } from './status.ts'
 import type { AppStore } from './store.ts'
@@ -33,14 +34,18 @@ import '@astryxdesign/theme-neutral/fonts.css'
 import '@astryxdesign/theme-neutral/theme.css'
 import './style.css'
 
-const inviteMatch = location.pathname.match(/^\/invite\/([\w-]+)$/)
+const inviteMatch = location.pathname.match(/^\/(invite|workspace-invite)\/([\w-]+)$/)
+const isWorkspaceInvite = inviteMatch?.[1] === 'workspace-invite'
 const contractMatch = location.pathname.match(/^\/contracts\/([\w-]+)$/)
 const isWorkspaceWizard = location.pathname === '/workspaces/new'
 const query = new URLSearchParams(location.search)
 const selectedWorkspaceId = query.get('workspace')
 const selectedWorkspaceSlug = query.get('workspaceSlug')
 const hasWorkspaceSelection = selectedWorkspaceId !== null || selectedWorkspaceSlug !== null
-const inviteKey = inviteMatch && 'clausid-invite:' + inviteMatch[1]
+const workspaceLanding = !hasWorkspaceSelection && location.pathname !== '/contracts'
+const workspaceHref = (workspace: Workspace) => workspace.slug && workspace.role !== 'member'
+  ? '/?workspaceSlug=' + workspace.slug : '/?workspace=' + workspace.id
+const inviteKey = inviteMatch && 'clausid-invite:' + inviteMatch[1] + ':' + inviteMatch[2]
 if (inviteKey && location.hash) {
   const token = new URLSearchParams(location.hash.slice(1)).get('token')
   if (token) sessionStorage.setItem(inviteKey, token)
@@ -61,14 +66,15 @@ function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
   async function accept() {
     setError('')
     try {
-      await api('/' + id + '/redeem', { token })
+      if (isWorkspaceInvite) await workspaceAction(id, 'redeem', { token })
+      else await api('/' + id + '/redeem', { token })
       sessionStorage.removeItem(inviteKey)
-      location.assign('/contracts/' + id)
+      location.assign(isWorkspaceInvite ? '/?workspace=' + id : '/contracts/' + id)
     } catch (reason) { setError(errorMessage(reason)) }
   }
   return <section className="auth-panel"><Card padding={5}><div className="flow">
-    <Heading level={1}>Contract invitation</Heading>
-    <p>{token ? 'Accept to open the contract with your verified account.' : 'Open the invitation link from your email.'}</p>
+    <Heading level={1}>{isWorkspaceInvite ? 'Workspace invitation' : 'Contract invitation'}</Heading>
+    <p>{token ? 'Accept to join with your verified account.' : 'Open the invitation link from your email.'}</p>
     {error && <div role="alert"><Banner status="error" title={error} /></div>}
     {token && <Button label="Accept invitation" variant="primary" clickAction={accept} />}
   </div></Card></section>
@@ -84,8 +90,8 @@ function Dashboard({ store }: { store: AppStore }) {
   const row = useProjection(store, 'dashboard')
   const contracts = row ? JSON.parse(row.value) as Summary[] : null
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null)
-  const selectedWorkspace = workspaces?.find(({ id, slug }) =>
-    selectedWorkspaceSlug !== null ? slug === selectedWorkspaceSlug : id === selectedWorkspaceId)
+  const selectedWorkspace = workspaces?.find(({ id, slug, role }) =>
+    selectedWorkspaceSlug !== null ? slug === selectedWorkspaceSlug && role !== 'member' : id === selectedWorkspaceId)
   const visibleContracts = selectedWorkspace
     ? contracts?.filter(({ workspaceId }) => workspaceId === selectedWorkspace.id) ?? null
     : contracts
@@ -141,35 +147,48 @@ function Dashboard({ store }: { store: AppStore }) {
   return <>
     <Layout header={<LayoutHeader hasDivider>
       <HStack vAlign="center" hAlign="between">
-        <Heading level={1}>Contracts</Heading>
+        <Heading level={1}>{workspaceLanding ? 'Workspaces' : 'Contracts'}</Heading>
         <div className="actions">
-          <Button label="New workspace" href="/workspaces/new" />
-          <Button label="New contract" variant="primary" isDisabled={Boolean(hasWorkspaceSelection && !selectedWorkspace)}
-            onClick={() => changeCreateOpen(true)} />
+          {workspaceLanding ? <>
+            <Button label="All contracts" href="/contracts" />
+            <Button label="New workspace" href="/workspaces/new" variant="primary" />
+          </> : <>
+            <Button label="Workspaces" href="/" />
+            {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
+            {(!hasWorkspaceSelection || selectedWorkspace?.role === 'owner') &&
+              <Button label={selectedWorkspace ? 'Add document' : 'New contract'} variant="primary"
+                onClick={() => changeCreateOpen(true)} />}
+          </>}
         </div>
       </HStack>
     </LayoutHeader>} content={<LayoutContent>
       <div className="flow">
         {error && <div role="alert"><Banner status="error" title={error} /></div>}
-        {!!workspaces?.length && <nav className="actions" aria-label="Workspaces">
-          <Link href="/" aria-current={!hasWorkspaceSelection ? 'page' : undefined}>All contracts</Link>
-          {workspaces.map(({ id, name, slug }) => <Link key={id} href={slug ? '/?workspaceSlug=' + slug : '/?workspace=' + id}
-            aria-current={id === selectedWorkspace?.id ? 'page' : undefined}>{name}</Link>)}
-        </nav>}
+        {workspaceLanding && (workspaces === null ? <Text role="status">Loading workspaces…</Text>
+          : workspaces.length === 0 ? <EmptyState title="No workspaces yet"
+            description="Create a workspace or accept an invitation from another party." />
+          : workspaces.map((workspace) => <Card key={workspace.id} padding={4}>
+            <div className="flow">
+              <Link href={workspaceHref(workspace)} weight="semibold">{workspace.name}</Link>
+              {workspace.description && <Text color="secondary">{workspace.description}</Text>}
+              <Badge label={workspace.role === 'member' ? 'Invited party' : 'Service provider'} variant="neutral" />
+            </div>
+          </Card>))}
         {selectedWorkspace && <div>
           <Heading level={2}>{selectedWorkspace.name}</Heading>
           {selectedWorkspace.description && <Text as="p" color="secondary">{selectedWorkspace.description}</Text>}
         </div>}
-        {hasWorkspaceSelection && workspaces && !selectedWorkspace ? <EmptyState title="Workspace unavailable"
+        {!workspaceLanding && (hasWorkspaceSelection && workspaces && !selectedWorkspace ? <EmptyState title="Workspace unavailable"
           actions={<Button label="Back to contracts" href="/" />} />
           : visibleContracts === null ? <Text role="status">Loading contracts…</Text>
           : visibleContracts.length === 0 ? <EmptyState title="No contracts yet"
-            description={selectedWorkspace ? 'Create the first contract in this workspace.' : 'Create a contract or accept an invitation to get started.'} />
-          : <Table<Summary> data={visibleContracts} columns={contractColumns} idKey="id" hasHover aria-label="Your contracts" />}
+            description={selectedWorkspace?.role === 'member' ? 'Contracts appear here when the service provider shares them.'
+              : selectedWorkspace ? 'Create the first contract in this workspace.' : 'Create a contract or accept an invitation to get started.'} />
+          : <Table<Summary> data={visibleContracts} columns={contractColumns} idKey="id" hasHover aria-label="Your contracts" />)}
       </div>
     </LayoutContent>} />
     <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form" padding={0}>
-      <Layout header={<DialogHeader title="New contract" onOpenChange={changeCreateOpen} />} content={<LayoutContent>
+      <Layout header={<DialogHeader title={selectedWorkspace ? 'Add document' : 'New contract'} onOpenChange={changeCreateOpen} />} content={<LayoutContent>
         <form onSubmit={create} className="template-form">
           <TextInput label="Contract title" htmlName="title" placeholder="e.g. Services agreement" width="100%"
             isRequired {...{ required: true, maxLength: 160 }} value={titleValue} onChange={setTitleValue} />
@@ -212,7 +231,7 @@ function App() {
   if (session.isPending && !session.isRefetching) return <Frame><p role="status">Checking your session…</p></Frame>
   if (!session.data?.user.emailVerified) return <LoginCard invitation={Boolean(inviteMatch)} />
   if (inviteMatch && inviteKey) return <Frame account={session.data.user}>
-    <Invitation id={inviteMatch[1]} inviteKey={inviteKey} />
+    <Invitation id={inviteMatch[2]} inviteKey={inviteKey} />
   </Frame>
   if (isWorkspaceWizard) return <Frame account={session.data.user}><WorkspaceWizard /></Frame>
   return <StoreGate account={session.data.user} />
