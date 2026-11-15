@@ -83,3 +83,27 @@ iframe {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.contract-editor-fullscreen {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.contract-editor-viewport {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.canvas-contract-text {
+  padding: 72px;
+}
+
+.canvas-contract-text .tiptap,
+.canvas-contract-text .tiptap :where(p, li, blockquote) {
+  font-size: 32px;
+  line-height: 1.5;
+}

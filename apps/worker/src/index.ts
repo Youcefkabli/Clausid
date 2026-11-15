@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
-import { createContract, identifier, redeemInvite } from '@clausid/contracts'
-import type { ContractView, Summary } from '@clausid/contracts'
+import { createContract, createWorkspace, identifier, redeemInvite } from '@clausid/contracts'
+import type { ContractView, Summary, Workspace } from '@clausid/contracts'
 import { Contract } from './contract.ts'
 import { HttpError, internal, readJson, safeResponse } from './http.ts'
 import type { Account, Env } from './http.ts'
@@ -10,15 +10,51 @@ export class Directory extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS contracts (id TEXT PRIMARY KEY, created INTEGER NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, created INTEGER NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_slugs (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_contracts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)')
   }
-  async fetch(request: Request) {
-    const id = new URL(request.url).pathname.slice(1)
-    if (request.method === 'PUT') {
-      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO contracts VALUES (?, ?)', id, Date.now())
-      return new Response(null, { status: 204 })
-    }
-    return Response.json(this.ctx.storage.sql.exec<{ id: string }>(
-      'SELECT id FROM contracts ORDER BY created DESC').toArray().map((row) => row.id))
+  fetch(request: Request) {
+    return safeResponse(async () => {
+      const path = new URL(request.url).pathname
+      const sql = this.ctx.storage.sql
+      if (path === '/workspaces') {
+        const select = 'SELECT workspaces.id, name, description, slug FROM workspaces LEFT JOIN workspace_slugs USING (id)'
+        if (request.method === 'POST') {
+          const { requestId, name, description, slug } = createWorkspace.parse(await readJson(request))
+          const item = this.ctx.storage.transactionSync(() => {
+            const existing = sql.exec<Workspace>(select + ' WHERE workspaces.id = ?', requestId).toArray()[0]
+            if (existing) return existing
+            if (slug && sql.exec('SELECT id FROM workspace_slugs WHERE slug = ?', slug).toArray().length) {
+              throw new HttpError(409, 'That workspace URL is already taken.')
+            }
+            sql.exec('INSERT INTO workspaces VALUES (?, ?, ?, ?)', requestId, name, description, Date.now())
+            if (slug) sql.exec('INSERT INTO workspace_slugs VALUES (?, ?)', requestId, slug)
+            return { id: requestId, name, description, slug }
+          })
+          return Response.json(item, { status: 201 })
+        }
+        return Response.json(sql.exec<Workspace>(select + ' ORDER BY created DESC').toArray())
+      }
+      if (request.method === 'PUT') {
+        const id = identifier.parse(path.slice(1))
+        const selected = new URL(request.url).searchParams.get('workspace')
+        const copy = new URL(request.url).searchParams.get('copy')
+        const workspace = selected ?? (copy && sql.exec<{ id: string }>(
+          'SELECT workspace_id AS id FROM workspace_contracts WHERE id = ?', copy).toArray()[0]?.id)
+        if (workspace && !sql.exec('SELECT id FROM workspaces WHERE id = ?', workspace).toArray().length) {
+          throw new HttpError(404, 'Workspace unavailable.')
+        }
+        this.ctx.storage.transactionSync(() => {
+          const existing = sql.exec('SELECT id FROM contracts WHERE id = ?', id).toArray().length > 0
+          sql.exec('INSERT OR IGNORE INTO contracts VALUES (?, ?)', id, Date.now())
+          if (workspace && !existing) sql.exec('INSERT INTO workspace_contracts VALUES (?, ?)', id, workspace)
+        })
+        return new Response(null, { status: 204 })
+      }
+      return Response.json(sql.exec<{ id: string; workspaceId: string | null }>(
+        'SELECT contracts.id, workspace_contracts.workspace_id AS workspaceId FROM contracts LEFT JOIN workspace_contracts USING (id) ORDER BY contracts.created DESC').toArray())
+    })
   }
 }
 function actor(env: Env, id: string, account: Account, action: string, request?: RequestInit) {
@@ -50,28 +86,37 @@ async function route(request: Request, env: Env) {
   if (!session.ok) throw new HttpError(503, 'Authentication is temporarily unavailable.')
   const account = await session.json<Account>()
   const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(account.id))
-  const register = async (id: string) => {
-    const response = await directory.fetch('https://directory/' + id, { method: 'PUT' })
+  if (pathname === '/api/workspaces') {
+    if (method === 'GET') return directory.fetch('https://directory/workspaces')
+    if (method === 'POST') return directory.fetch('https://directory/workspaces', json(await readJson(request)))
+  }
+  const register = async (id: string, options?: { workspace?: string; copy?: string }) => {
+    const url = new URL('https://directory/' + id)
+    if (options?.workspace) url.searchParams.set('workspace', options.workspace)
+    if (options?.copy) url.searchParams.set('copy', options.copy)
+    const response = await directory.fetch(url, { method: 'PUT' })
+    if (response.status === 404) throw new HttpError(404, 'Workspace unavailable.')
     if (!response.ok) throw new HttpError(503, 'Contract directory is temporarily unavailable.')
   }
   if (pathname === '/api/contracts') {
     if (method === 'POST') {
-      const { title, requestId } = createContract.parse(await readJson(request))
-      await register(requestId)
+      const { title, requestId, workspaceId } = createContract.parse(await readJson(request))
+      await register(requestId, { workspace: workspaceId })
       return actor(env, requestId, account, 'create', json({ title }))
     }
     if (method === 'GET') {
       const response = await directory.fetch('https://directory/')
       if (!response.ok) throw new HttpError(503, 'Contract directory is temporarily unavailable.')
-      const ids = await response.json<string[]>()
+      const entries = await response.json<{ id: string; workspaceId: string | null }[]>()
       const summaries: Summary[] = []
-      for (let index = 0; index < ids.length; index += 12) {
-        const views = await Promise.all(ids.slice(index, index + 12).map((id) => actor(env, id, account, 'view')))
-        for (const view of views) {
+      for (let index = 0; index < entries.length; index += 12) {
+        const batch = entries.slice(index, index + 12)
+        const views = await Promise.all(batch.map(({ id }) => actor(env, id, account, 'view')))
+        for (const [offset, view] of views.entries()) {
           if (view.status === 404) continue
           if (!view.ok) throw new HttpError(503, 'A contract could not be loaded.')
           const { id, title, role, status } = await view.json<ContractView>()
-          summaries.push({ id, title, role, status })
+          summaries.push({ id, title, role, status, workspaceId: batch[offset].workspaceId ?? undefined })
         }
       }
       return Response.json(summaries)
@@ -97,7 +142,7 @@ async function route(request: Request, env: Env) {
     const source = await actor(env, id, account, 'copy-source')
     if (!source.ok) return source
     const { draft } = await source.json<{ draft: string }>()
-    await register(requestId)
+    await register(requestId, { copy: id })
     return actor(env, requestId, account, 'create-copy', json({ title, draft }))
   }
   if (method === 'POST' && (/^(invite|preview|freeze|sign|void)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {

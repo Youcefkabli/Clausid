@@ -1,3 +1,5 @@
+import { AccountSettingsDialog } from './account-settings.tsx'
+import CanvasEditor from './app/canvas-editor/page.tsx'
 import { Layout, LayoutContent, LayoutFooter, LayoutHeader } from '@astryxdesign/core/Layout'
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Stack'
 import { Step, Stepper } from '@astryxdesign/core/Stepper'
@@ -12,13 +14,10 @@ import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useEffect, useId, useState } from 'react'
-import type { FormEvent } from 'react'
+import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden'
+import type { FormEvent, ReactNode } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
-import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Collaboration from '@tiptap/extension-collaboration'
-import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import * as Y from 'yjs'
 import { Awareness } from 'y-protocols/awareness'
 import type { ContractView, Preview } from '@clausid/contracts'
@@ -29,36 +28,10 @@ import type { ConnectionState } from './connection.ts'
 import { clearProjection, project, useProjection } from './store.ts'
 import type { AppStore } from './store.ts'
 
-function Editor({ document, awareness, name, editable }: {
-  document: Y.Doc; awareness: Awareness; name: string; editable: boolean
+export function ContractPage({ id, account, store, renderPage }: {
+  id: string; account: { name: string; email: string }; store: AppStore
+  renderPage: (content: ReactNode) => ReactNode
 }) {
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ link: false, undoRedo: false, trailingNode: false }),
-      Collaboration.configure({ document }),
-      CollaborationCaret.configure({ provider: { awareness }, user: { name, color: '#246a59' } }),
-    ],
-    editorProps: { attributes: { 'aria-label': 'Contract document', role: 'textbox', 'aria-multiline': 'true' } },
-    editable,
-  }, [document, awareness, name])
-  useEffect(() => { editor?.setEditable(editable) }, [editor, editable])
-  const current = useEditorState({ editor, selector: ({ editor }) => editor ? {
-    bold: editor.isActive('bold'), italic: editor.isActive('italic'), heading: editor.isActive('heading', { level: 2 }),
-    bulletList: editor.isActive('bulletList'), orderedList: editor.isActive('orderedList'),
-  } : undefined })
-  return <Card padding={5}><div className="flow">
-    {editable && <div className="actions" role="group" aria-label="Document formatting">
-      <Button label="Bold" size="sm" aria-pressed={current?.bold} onClick={() => editor?.chain().focus().toggleBold().run()} />
-      <Button label="Italic" size="sm" aria-pressed={current?.italic} onClick={() => editor?.chain().focus().toggleItalic().run()} />
-      <Button label="Heading" size="sm" aria-pressed={current?.heading} onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} />
-      <Button label="Bulleted list" size="sm" aria-pressed={current?.bulletList} onClick={() => editor?.chain().focus().toggleBulletList().run()} />
-      <Button label="Numbered list" size="sm" aria-pressed={current?.orderedList} onClick={() => editor?.chain().focus().toggleOrderedList().run()} />
-    </div>}
-    <EditorContent editor={editor} />
-  </div></Card>
-}
-
-export function ContractPage({ id, name, store }: { id: string; name: string; store: AppStore }) {
   const [room] = useState(() => {
     const document = new Y.Doc()
     return { document, awareness: new Awareness(document) }
@@ -68,6 +41,7 @@ export function ContractPage({ id, name, store }: { id: string; name: string; st
   const [connection, setConnection] = useState<ConnectionState>({ ready: false, pending: 0, error: '', ended: false })
   const [started, setStarted] = useState(false)
   const [error, setError] = useState('')
+  const [accountOpen, setAccountOpen] = useState(false)
   const [share, setShare] = useState(false)
   const [prepare, setPrepare] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
@@ -139,65 +113,19 @@ export function ContractPage({ id, name, store }: { id: string; name: string; st
   }
 
   const alerts = <>{error && <div role="alert"><Banner status="error" title={error} /></div>}</>
-  if (!contract) return !error ? <p role="status">Opening contract…</p> : alerts
+  if (!contract) return renderPage(!error ? <p role="status">Opening contract…</p> : alerts)
   const draft = contract.status === 'Draft'
   const owner = contract.role === 'owner'
   const canPrepare = connection.ready && !connection.error && connection.pending === 0
   const canEdit = draft && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => { setError(''); setNotice(''); set(true) }
-  return <div className="flow">
-    <div className="contract-top">
-      <div className="flow"><Link href="/">Back to contracts</Link><Heading level={1}>{contract.title}</Heading></div>
-      <Badge label={contract.status} variant={statusVariant[contract.status]} />
-      <div className="actions">
-        {draft && owner && !connection.ended && <>
-          <Button label="Share" onClick={() => openModal(setShare)} />
-          <Button label="Prepare for signing" variant="primary" isDisabled={!canPrepare} onClick={() => openModal(setPrepare)} />
-        </>}
-        {owner && contract.status === 'Awaiting signatures' && <Button label="Void contract" onClick={() => openModal(setVoidOpen)} />}
-        {owner && contract.status === 'Voided' && <Button label="Duplicate as draft" clickAction={async () => {
-          const copy = await mutate('duplicate', { title: contract.title, requestId: copyId })
-          if (copy) location.assign('/contracts/' + copy.id)
-        }} />}
-      </div>
-    </div>
+  const pageFeedback = <>
     {!share && !prepare && !voidOpen && alerts}
     {connection.error && <div role="alert"><Banner status="error" title={connection.error}
       description={recoverable ? 'Copy your local changes before leaving this page.' : undefined} /></div>}
-    <div className="workspace-grid">
-      <section className="flow" aria-label={draft ? 'Draft' : 'Frozen contract'}>
-        {draft && !connection.ended && <Text color="secondary" role="status">
-          {!connection.ready ? (started ? 'Reconnecting…' : 'Connecting…') : connection.pending ? 'Saving changes…' : 'Saved'}
-        </Text>}
-        {started && ((draft && !connection.ended) || recoverable) && (
-          <Editor document={room.document} awareness={room.awareness} name={name} editable={canEdit} />
-        )}
-        {!draft && contract.version && !connection.ended && <Card><div className="flow">
-          <Link href={file + 'pdf'} target="_blank" rel="noreferrer">Open PDF in a new tab</Link>
-          <iframe src={file + 'pdf'} title="Frozen contract PDF" />
-        </div></Card>}
-      </section>
-      {!connection.ended && <aside><Card padding={5}><div className="flow">
-        <Heading level={2}>{draft ? 'Collaborators' : 'Signatures'}</Heading>
-        {draft && <ul>{contract.editors.map((editor) => <li key={editor.id}>{editor.email}</li>)}</ul>}
-        {contract.version && <ul>{contract.version.signers.map((signer) => <li key={signer.email}>
-          {signer.email}<small>{signer.signedAt ? 'Signed ' + new Date(signer.signedAt).toLocaleString() : 'Pending'}</small>
-        </li>)}</ul>}
-        {contract.version?.canSign && <form onSubmit={async (event) => {
-          event.preventDefault()
-          const fields = new FormData(event.currentTarget)
-          await mutate('sign', { versionId: contract.version!.id, digest: contract.version!.digest,
-            name: fields.get('name'), consent: fields.has('consent'), consentVersion })
-        }}>
-          <TextInput label="Full name" htmlName="name" autoComplete="name" isRequired {...{ required: true, maxLength: 120 }} value={signingName} onChange={setSigningName} />
-          <CheckboxInput label={consentText} htmlName="consent" value={consent} onChange={setConsent} isRequired />
-          <Button label="Sign contract" type="submit" variant="primary" isDisabled={busy} />
-        </form>}
-        {contract.status === 'Signed' && <Button label="Download signing evidence" href={file + 'evidence'} variant="primary" />}
-      </div></Card></aside>}
-    </div>
-
+  </>
+  const dialogs = <>
     <Dialog isOpen={share && draft && !connection.ended} onOpenChange={(open) => { setShare(open); if (!open) setError('') }} aria-label="Share contract">
       <div className="flow"><Heading level={2}>Share contract</Heading>
       <form onSubmit={async (event) => {
@@ -269,5 +197,68 @@ export function ContractPage({ id, name, store }: { id: string; name: string; st
         }} />
       </div>
     </div></Dialog>
-  </div>
+  </>
+
+  if (started && ((draft && !connection.ended) || recoverable)) {
+    return <main className="contract-editor-fullscreen">
+      <VisuallyHidden as="h1">{contract.title}</VisuallyHidden>
+      {pageFeedback}
+      <div className="contract-editor-viewport">
+        <CanvasEditor title={contract.title} document={room.document} awareness={room.awareness}
+          name={account.name} editable={canEdit}
+          syncStatus={draft && !connection.ended ? (
+            !connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved'
+          ) : undefined}
+          onShare={draft && owner && !connection.ended ? () => openModal(setShare) : undefined}
+          onPrepare={draft && owner && !connection.ended ? () => openModal(setPrepare) : undefined}
+          canPrepare={canPrepare}
+          onAccountSettings={() => setAccountOpen(true)} />
+      </div>
+      {dialogs}
+      {accountOpen && <AccountSettingsDialog isOpen={accountOpen} onOpenChange={setAccountOpen} account={account} />}
+    </main>
+  }
+
+  return renderPage(<div className="flow">
+    <div className="contract-top">
+      <div className="flow"><Link href="/">Back to contracts</Link><Heading level={1}>{contract.title}</Heading></div>
+      <Badge label={contract.status} variant={statusVariant[contract.status]} />
+      <div className="actions">
+        {owner && contract.status === 'Awaiting signatures' && <Button label="Void contract" onClick={() => openModal(setVoidOpen)} />}
+        {owner && contract.status === 'Voided' && <Button label="Duplicate as draft" clickAction={async () => {
+          const copy = await mutate('duplicate', { title: contract.title, requestId: copyId })
+          if (copy) location.assign('/contracts/' + copy.id)
+        }} />}
+      </div>
+    </div>
+    {pageFeedback}
+    <div className={draft ? undefined : "workspace-grid"}>
+      <section className="flow" aria-label={draft ? 'Draft' : 'Frozen contract'}>
+        {draft && !connection.ended && !started && <Text color="secondary" role="status">Connecting…</Text>}
+        {!draft && contract.version && !connection.ended && <Card><div className="flow">
+          <Link href={file + 'pdf'} target="_blank" rel="noreferrer">Open PDF in a new tab</Link>
+          <iframe src={file + 'pdf'} title="Frozen contract PDF" />
+        </div></Card>}
+      </section>
+      {!draft && !connection.ended && <aside><Card padding={5}><div className="flow">
+        <Heading level={2}>Signatures</Heading>
+        {contract.version && <ul>{contract.version.signers.map((signer) => <li key={signer.email}>
+          {signer.email}<small>{signer.signedAt ? 'Signed ' + new Date(signer.signedAt).toLocaleString() : 'Pending'}</small>
+        </li>)}</ul>}
+        {contract.version?.canSign && <form onSubmit={async (event) => {
+          event.preventDefault()
+          const fields = new FormData(event.currentTarget)
+          await mutate('sign', { versionId: contract.version!.id, digest: contract.version!.digest,
+            name: fields.get('name'), consent: fields.has('consent'), consentVersion })
+        }}>
+          <TextInput label="Full name" htmlName="name" autoComplete="name" isRequired {...{ required: true, maxLength: 120 }} value={signingName} onChange={setSigningName} />
+          <CheckboxInput label={consentText} htmlName="consent" value={consent} onChange={setConsent} isRequired />
+          <Button label="Sign contract" type="submit" variant="primary" isDisabled={busy} />
+        </form>}
+        {contract.status === 'Signed' && <Button label="Download signing evidence" href={file + 'evidence'} variant="primary" />}
+      </div></Card></aside>}
+    </div>
+
+    {dialogs}
+  </div>)
 }

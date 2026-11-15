@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import SettingsDialog from './app/settings-dialog/page.tsx'
 
+export { SettingsDialog as AccountSettingsDialog }
+
 export function AccountSettings({ account }: { account: { name: string; email: string } }) {
   const [open, setOpen] = useState(false)
 
