@@ -18,3 +18,13 @@ USER node
 FROM caddy:2.10.2-alpine AS web
 COPY --from=build /app/apps/web/dist /srv
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
+
+FROM rust:1.93.1-bookworm AS pdf-build
+WORKDIR /pdf
+COPY packages/pdf-engine/ ./
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install wasm-bindgen-cli --version 0.2.130 --locked \
+ && sh build.sh
+
+FROM runtime AS pdf
+COPY --from=pdf-build /pdf/dist/ /app/packages/pdf-engine/dist/

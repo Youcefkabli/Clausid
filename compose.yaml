@@ -58,6 +58,20 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
     volumes:
       - auth:/var/lib/clausid/auth
+  pdf:
+    profiles: [pdf]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: pdf
+    command:
+      - apps/worker/node_modules/workerd/bin/workerd
+      - serve
+      - deploy/pdf-workerd.capnp
+      - --socket-addr
+      - http=0.0.0.0:8789
+    mem_limit: 512m
+    restart: on-failure
   mailpit:
     image: axllent/mailpit:v1.33.1
     profiles: [dev]
