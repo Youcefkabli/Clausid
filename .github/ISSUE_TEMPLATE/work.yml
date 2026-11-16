@@ -1,0 +1,33 @@
+name: Clausid work item
+description: Define an outcome, an implementation task, or a discovery question.
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Work type
+      options:
+        - Outcome
+        - Implementation
+        - Discovery
+        - Release qualification
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the user or operational result and link the parent issue if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and dependencies
+      description: Name the affected area, constraints, and any blocking issues.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and verification
+      description: List observable acceptance criteria and the checks or evidence required.
+    validations:
+      required: true
