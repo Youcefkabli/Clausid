@@ -21,15 +21,18 @@ Assign active issues to a human owner. Apply the `blocked` label when work canno
 
 Review the board weekly. Record shipped work, qualified outcomes, blockers, and the next decision. After several completed issues, review elapsed time from In Progress to Done and time blocked to decide what to automate.
 
-## Initial GitHub issues
+## Progress mapped to the roadmap
 
-Use this list to seed the Project. Once the issues exist, use GitHub for their status and evidence.
+This snapshot uses `a248d85` as the implementation baseline. Its [GitHub Actions run](https://github.com/Youcefkabli/Clausid/actions/runs/43786747201) passed the application verification and standalone PDF processor jobs.
 
-- **Now outcome — Establish the workspace-to-signature baseline.** Close when a named revision has linked CI and staging evidence covering verified accounts, live edits, provider-only approval, freeze, signing, digest verification, and restoration of both SQLite volumes.
-  - **Implementation — Map baseline behavior to automated checks.** Link the relevant Playwright cases, identify missing coverage, and record which commands run in the existing CI jobs. This is the first agent workflow pilot.
-  - **Release qualification — Verify the workflow and restore in staging.** Assign a staging owner. Record the revision, CI run, staged workflow results, and restore results. Verify SHA-256 of the restored frozen PDF against the evidence manifest. Flag the issue as blocked if staging access or ownership is pending.
-- **Next outcome — Decide where the standalone PDF processor fits.** Evaluate existing-PDF text edits as the proposed use case. Before marking the evaluation Ready, confirm the user workflow, fixture set, and runtime and memory budgets. Record fidelity, unsupported-file behavior, failure handling, and resource measurements. Require accepted output to reopen and render the requested edit while preserving unaffected content. Record a decision to integrate, narrow, or defer. Open a separate issue for any signing-path change.
-- **Later discovery — Gather pilot feedback on workspace, editing, and signing.** Capture recurring problems, supporting observations, and a ranked recommendation. Promote a candidate to an outcome once it has a defined result and verification method. Keep identifying information and contract contents out of GitHub.
+| Plan item | Completed work | Remaining work |
+| --- | --- | --- |
+| Development setup | Astryx CLI and scoped agent guidance (`8a8c8c0`). Architecture, workflow, issue form, and PR template (`a248d85`). | Verify and configure the Project, seed active issues, and run the first tracked issue through PR review. GitHub listed zero issues, milestones, and releases when checked. Project inventory requires the `read:project` scope. |
+| **Now** — Establish the workspace-to-signature baseline | Core self-hosted collaboration, signing, evidence, and recovery foundation (`2ab3b70`). Astryx login, settings, workspace wizard, and canvas (`a7703c0`, `d029102`). Provider-only workspace sharing and approval (`93f3b38`), followed by the canvas header update (`f2bbc5c`). Baseline coverage is mapped below and CI passed on the referenced revision. | Assign a staging owner and qualify a named revision. Exercise two verified accounts, live edits, provider-only approval, freeze, signing, evidence download, and Compose volume restore. Record the SHA-256 comparison of the restored PDF against its evidence manifest. Keep the outcome open until staging evidence is attached. |
+| **Next** — Decide where the standalone PDF processor fits | Standalone Rust/Wasm editing processor, optional workerd service, fixtures, and CI smoke check (`c38fe59`). | Confirm the existing-PDF editing use case, fixture set, and resource budgets. Record fidelity, unsupported inputs, failure behavior, and runtime and memory measurements. Decide whether to integrate, narrow, or defer. Track any signing-path change separately. |
+| **Later** — Gather pilot feedback on workspace, editing, and signing | Pilot findings are unrecorded in the repository. | Capture recurring problems and a ranked recommendation. Promote a candidate to an outcome when it has a defined result and verification method. Keep identifying information and contract contents out of GitHub. |
+
+Seed the Project with the open Now and Next outcomes and the Later discovery issue. Link the existing commits and CI run as evidence. Add staging qualification as a separate issue under Now and in the selected release milestone. Use that issue to track access, ownership, and the staging run.
 
 ## Workflow baseline coverage
 
