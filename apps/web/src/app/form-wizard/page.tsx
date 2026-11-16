@@ -83,7 +83,7 @@ import {Heading, Text} from '@astryxdesign/core/Text';
 import {TextArea} from '@astryxdesign/core/TextArea';
 import {TextInput} from '@astryxdesign/core/TextInput';
 import {useMediaQuery} from '@astryxdesign/core/hooks';
-import {titleInput, workspaceSlug} from '@clausid/contracts';
+import {titleInput, workspaceProject, workspaceSlug} from '@clausid/contracts';
 import type {Workspace} from '@clausid/contracts';
 import {ApiError, errorMessage, workspaceApi} from '../../api.ts';
 
@@ -201,6 +201,7 @@ export default function FormWizardPage() {
   // and there is no second copy of the message to keep in sync.
   const fieldRefs = {
     name: useRef<HTMLInputElement>(null),
+    project: useRef<HTMLInputElement>(null),
     slug: useRef<HTMLInputElement>(null),
     invites: useRef<HTMLTextAreaElement>(null),
     seats: useRef<HTMLInputElement>(null),
@@ -218,6 +219,7 @@ export default function FormWizardPage() {
 
   // Step 1 — workspace
   const [name, setName] = useState('');
+  const [project, setProject] = useState('');
   const [slug, setSlug] = useState('');
   const [region, setRegion] = useState('us-east');
   const [visibility, setVisibility] = useState('invite');
@@ -256,6 +258,9 @@ export default function FormWizardPage() {
     if (!titleInput.safeParse(name).success) {
       workspace.name = 'Enter a workspace name of 1–160 characters.';
     }
+    if (!workspaceProject.safeParse(project).success) {
+      workspace.project = 'Use up to 160 characters for the project name.';
+    }
     if (!slug.trim()) {
       workspace.slug = 'Enter a URL for the workspace.';
     } else if (TAKEN_SLUGS.includes(slug.trim()) || slug.trim() === takenSlug) {
@@ -288,6 +293,7 @@ export default function FormWizardPage() {
     return [workspace, team, planStep, review];
   }, [
     name,
+    project,
     slug,
     invalidEmails,
     seats,
@@ -346,7 +352,7 @@ export default function FormWizardPage() {
 
     setBusy(true);
     try {
-      const workspace = await workspaceApi<Workspace>({requestId, name: name.trim(), slug: slug.trim()});
+      const workspace = await workspaceApi<Workspace>({requestId, name: name.trim(), project: project.trim(), slug: slug.trim()});
       location.assign(workspace.slug ? '/?workspaceSlug=' + workspace.slug : '/?workspace=' + workspace.id);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
@@ -472,6 +478,8 @@ export default function FormWizardPage() {
                       : undefined
                   }
                 />
+                <TextInput label="Project" ref={fieldRefs.project} value={project} onChange={setProject}
+                  status={currentErrors.project ? {type: 'error', message: currentErrors.project} : undefined} />
                 <TextInput
                   label="Workspace URL"
                   ref={fieldRefs.slug}
@@ -720,7 +728,7 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Review and create</Heading>
                 <Text type="supporting" color="secondary">
-                  Creating saves the workspace name and URL. Region, access, invitations, and plan choices
+                  Creating saves the workspace name, project, and URL. Region, access, invitations, and plan choices
                   are previews. No invitations or charges will be issued.
                 </Text>
               </VStack>
@@ -768,6 +776,7 @@ export default function FormWizardPage() {
                 <MetadataListItem label="Workspace name">
                   {name.trim() || '—'}
                 </MetadataListItem>
+                <MetadataListItem label="Project">{project.trim() || '—'}</MetadataListItem>
                 <MetadataListItem label="Workspace URL">
                   {location.origin}/?workspaceSlug={slug.trim() || '—'}
                 </MetadataListItem>

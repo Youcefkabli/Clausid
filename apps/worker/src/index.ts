@@ -6,6 +6,11 @@ import { Contract } from './contract.ts'
 import { HttpError, internal, readJson, safeResponse } from './http.ts'
 import type { Account, Env } from './http.ts'
 
+type WorkspaceRow = Pick<Workspace, 'id' | 'name' | 'description' | 'slug' | 'project' | 'createdAt'>
+
+const workspaceSelect = 'SELECT workspaces.id, name, description, slug, project, created AS createdAt FROM workspaces LEFT JOIN workspace_slugs USING (id) LEFT JOIN workspace_projects USING (id)'
+const workspaceReady = 'NOT EXISTS (SELECT 1 FROM workspace_requests WHERE workspace_id = workspaces.id AND ready = 0)'
+
 export { Contract }
 export class Directory extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -14,6 +19,8 @@ export class Directory extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_access (id TEXT PRIMARY KEY, workspace TEXT NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, created INTEGER NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_slugs (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_projects (id TEXT PRIMARY KEY, project TEXT NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_requests (request_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, ready INTEGER NOT NULL CHECK (ready IN (0, 1)))')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_contracts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)')
   }
   fetch(request: Request) {
@@ -26,10 +33,28 @@ export class Directory extends DurableObject<Env> {
         sql.exec('INSERT OR REPLACE INTO workspace_access VALUES (?, ?)', workspace.id, JSON.stringify(workspace))
         return new Response(null, { status: 204 })
       }
+      if (path.startsWith('/workspace-ready/') && request.method === 'POST') {
+        const id = identifier.parse(path.slice('/workspace-ready/'.length))
+        sql.exec('UPDATE workspace_requests SET ready = 1 WHERE workspace_id = ?', id)
+        return new Response(null, { status: 204 })
+      }
+      if (path.startsWith('/workspace-delete/') && request.method === 'POST') {
+        const id = identifier.parse(path.slice('/workspace-delete/'.length))
+        this.ctx.storage.transactionSync(() => {
+          if (sql.exec('SELECT id FROM workspace_contracts WHERE workspace_id = ? LIMIT 1', id).toArray().length) {
+            throw new HttpError(409, 'Only empty, unshared workspaces can be deleted.')
+          }
+          sql.exec('INSERT OR IGNORE INTO workspace_requests SELECT id, id, 1 FROM workspaces WHERE id = ?', id)
+          sql.exec('DELETE FROM workspace_slugs WHERE id = ?', id)
+          sql.exec('DELETE FROM workspace_projects WHERE id = ?', id)
+          sql.exec('DELETE FROM workspaces WHERE id = ?', id)
+        })
+        return new Response(null, { status: 204 })
+      }
       if (path.startsWith('/workspaces/')) {
         const id = identifier.parse(path.slice('/workspaces/'.length))
-        const owned = sql.exec<Workspace>(
-          'SELECT workspaces.id, name, description, slug FROM workspaces LEFT JOIN workspace_slugs USING (id) WHERE workspaces.id = ?', id,
+        const owned = sql.exec<WorkspaceRow>(
+          workspaceSelect + ' WHERE workspaces.id = ? AND ' + workspaceReady, id,
         ).toArray()[0]
         if (owned) return Response.json({...owned, role: 'owner'})
         const access = sql.exec<{ workspace: string }>('SELECT workspace FROM workspace_access WHERE id = ?', id).toArray()[0]
@@ -43,23 +68,35 @@ export class Directory extends DurableObject<Env> {
         return Response.json(entry ?? null)
       }
       if (path === '/workspaces') {
-        const select = 'SELECT workspaces.id, name, description, slug FROM workspaces LEFT JOIN workspace_slugs USING (id)'
         if (request.method === 'POST') {
-          const { requestId, name, description, slug } = createWorkspace.parse(await readJson(request))
+          const { requestId, name, description, slug, project } = createWorkspace.parse(await readJson(request))
           const item = this.ctx.storage.transactionSync(() => {
-            const existing = sql.exec<Workspace>(select + ' WHERE workspaces.id = ?', requestId).toArray()[0]
-            if (existing) return existing
+            const mapping = sql.exec<{ workspace_id: string; ready: number }>(
+              'SELECT workspace_id, ready FROM workspace_requests WHERE request_id = ?', requestId,
+            ).toArray()[0]
+            if (mapping) {
+              const workspace = sql.exec<WorkspaceRow>(workspaceSelect + ' WHERE workspaces.id = ?', mapping.workspace_id).toArray()[0]
+              if (!workspace) throw new HttpError(409, 'This request was already used for a deleted workspace.')
+              return { workspace, pending: mapping.ready === 0 }
+            }
+            const legacy = sql.exec<WorkspaceRow>(workspaceSelect + ' WHERE workspaces.id = ? AND NOT EXISTS '
+              + '(SELECT 1 FROM workspace_requests WHERE workspace_id = workspaces.id)', requestId).toArray()[0]
+            if (legacy) return { workspace: legacy, pending: false }
             if (slug && sql.exec('SELECT id FROM workspace_slugs WHERE slug = ?', slug).toArray().length) {
               throw new HttpError(409, 'That workspace URL is already taken.')
             }
-            sql.exec('INSERT INTO workspaces VALUES (?, ?, ?, ?)', requestId, name, description, Date.now())
-            if (slug) sql.exec('INSERT INTO workspace_slugs VALUES (?, ?)', requestId, slug)
-            return { id: requestId, name, description, slug }
+            const id = crypto.randomUUID()
+            const createdAt = Date.now()
+            sql.exec('INSERT INTO workspaces VALUES (?, ?, ?, ?)', id, name, description, createdAt)
+            if (slug) sql.exec('INSERT INTO workspace_slugs VALUES (?, ?)', id, slug)
+            if (project) sql.exec('INSERT INTO workspace_projects VALUES (?, ?)', id, project)
+            sql.exec('INSERT INTO workspace_requests VALUES (?, ?, 0)', requestId, id)
+            return { workspace: { id, name, description, slug: slug ?? null, project: project || null, createdAt }, pending: true }
           })
           return Response.json(item, { status: 201 })
         }
         return Response.json([
-          ...sql.exec<Workspace>(select + ' ORDER BY created DESC').toArray().map((workspace) => ({ ...workspace, role: 'owner' })),
+          ...sql.exec<WorkspaceRow>(workspaceSelect + ' WHERE ' + workspaceReady + ' ORDER BY created DESC').toArray().map((workspace) => ({ ...workspace, role: 'owner' })),
           ...sql.exec<{workspace: string}>('SELECT workspace FROM workspace_access').toArray().map(({ workspace }) => JSON.parse(workspace)),
         ])
       }
@@ -70,7 +107,8 @@ export class Directory extends DurableObject<Env> {
         const copy = url.searchParams.get('copy')
         const workspace = selected ?? (copy && sql.exec<{ id: string }>(
           'SELECT workspace_id AS id FROM workspace_contracts WHERE id = ?', copy).toArray()[0]?.id)
-        if (workspace && !sql.exec('SELECT id FROM workspaces WHERE id = ? UNION SELECT id FROM workspace_access WHERE id = ?', workspace, workspace).toArray().length) {
+        if (workspace && !sql.exec('SELECT id FROM workspaces WHERE id = ? AND ' + workspaceReady
+          + ' UNION SELECT id FROM workspace_access WHERE id = ?', workspace, workspace).toArray().length) {
           throw new HttpError(404, 'Workspace unavailable.')
         }
         this.ctx.storage.transactionSync(() => {
@@ -116,15 +154,42 @@ async function route(request: Request, env: Env) {
   if (!session.ok) throw new HttpError(503, 'Authentication is temporarily unavailable.')
   const account = await session.json<Account>()
   const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(account.id))
-  if (pathname === '/api/workspaces') {
-    if (method === 'GET') return directory.fetch('https://directory/workspaces')
-    if (method === 'POST') return directory.fetch('https://directory/workspaces', json(await readJson(request)))
-  }
   const sharing = (id: string, action: string, options?: RequestInit) => {
     const headers = new Headers(options?.headers)
     headers.set('x-clausid-account', encodeURIComponent(JSON.stringify(account)))
     return env.DIRECTORY.get(env.DIRECTORY.idFromName('workspace:' + id))
       .fetch('https://directory/sharing/' + action, { ...options, headers })
+  }
+  if (pathname === '/api/workspaces') {
+    if (method === 'GET') {
+      const listing = await directory.fetch('https://directory/workspaces')
+      if (!listing.ok) return listing
+      const workspaces = await listing.json<Workspace[]>()
+      const result: Workspace[] = []
+      for (let offset = 0; offset < workspaces.length; offset += 12) {
+        result.push(...await Promise.all(workspaces.slice(offset, offset + 12).map(async (workspace) => {
+          const detail = await sharing(workspace.id, 'details')
+          if (detail.status === 404 && workspace.role === 'owner') {
+            return { ...workspace, assignee: { id: account.id, email: account.email } }
+          }
+          if (!detail.ok) throw new HttpError(503, 'Workspace details are temporarily unavailable.')
+          return { ...workspace, ...await detail.json<Workspace>(), role: workspace.role }
+        })))
+      }
+      return Response.json(result)
+    }
+    if (method === 'POST') {
+      const reservation = await directory.fetch('https://directory/workspaces', json(await readJson(request)))
+      if (!reservation.ok) return reservation
+      const { workspace, pending } = await reservation.json<{ workspace: Workspace; pending: boolean }>()
+      if (pending) {
+        const initialized = await sharing(workspace.id, 'initialize', json(workspace))
+        if (!initialized.ok) return initialized
+        const ready = await directory.fetch('https://directory/workspace-ready/' + workspace.id, { method: 'POST' })
+        if (!ready.ok) return ready
+      }
+      return Response.json(workspace, { status: 201 })
+    }
   }
   const workspaceInfo = (id: string) => directory.fetch('https://directory/workspaces/' + id)
   async function isServiceProvider(id: string) {
@@ -144,12 +209,24 @@ async function route(request: Request, env: Env) {
     }
     return sharing(id, 'parties')
   }
-  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem)$/)
+  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem|customize|delete)$/)
   if (workspaceAction) {
     const id = identifier.parse(workspaceAction[1])
     const action = workspaceAction[2]
     if (action === 'redeem' && method === 'POST') return sharing(id, action, json(await readJson(request)))
     if (action === 'parties' && method === 'GET') return parties(id)
+    if (action === 'delete' && method === 'POST') {
+      if (!await isServiceProvider(id)) throw providerRequired()
+      const initialized = await parties(id)
+      if (!initialized.ok) return initialized
+      return sharing(id, 'delete', { method: 'POST' })
+    }
+    if (action === 'customize' && method === 'POST') {
+      if (!await isServiceProvider(id)) throw providerRequired()
+      const roster = await parties(id)
+      if (!roster.ok) return roster
+      return sharing(id, action, json(await readJson(request)))
+    }
     if (action === 'invite' && method === 'POST') {
       const roster = await parties(id)
       if (!roster.ok) return roster

@@ -6,13 +6,28 @@ export const titleInput = z.string().trim().min(1).max(160)
 export const createContract = z.object({ title: titleInput, requestId: identifier, workspaceId: identifier.optional() })
 export const workspaceSlug = z.string().min(1).max(63).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
   .refine((slug) => !['admin', 'app', 'api', 'northwind', 'support'].includes(slug))
+export const workspaceProject = z.string().trim().max(160)
 export const createWorkspace = z.object({
   requestId: identifier,
   name: titleInput,
   slug: workspaceSlug.optional(),
+  project: workspaceProject.optional(),
   description: z.string().trim().max(500).default(''),
 })
-export type Workspace = { id: string; name: string; description: string; slug?: string | null; role?: 'owner' | 'member' }
+export const workspaceStatuses = ['Draft', 'Review', 'Negotiation', 'Signature', 'Active', 'Expiring', 'On hold', 'Closed', 'Completed'] as const
+export const customizeWorkspace = z.object({
+  name: titleInput,
+  description: z.string().trim().max(500),
+  project: workspaceProject,
+  status: z.enum(workspaceStatuses),
+  assigneeId: z.string().min(1).max(100),
+  label: z.string().trim().min(1).max(40),
+}).partial().refine((fields) => Object.keys(fields).length > 0, 'Change at least one workspace setting.')
+export type Workspace = {
+  id: string; name: string; description: string; slug?: string | null; role?: 'owner' | 'member'
+  project?: string | null; createdAt?: number; updatedAt?: number; status?: typeof workspaceStatuses[number]
+  assignee?: { id: string; email: string }; labels?: string[]
+}
 
 export type WorkspaceParties = {
   role: 'owner' | 'member'

@@ -1,18 +1,16 @@
+import WorkspacesTable, { contractColumns } from './app/table-grouped/page.tsx'
 import { WorkspacePartiesDialog } from './workspace-parties.tsx'
 import WorkspaceWizard from './app/form-wizard/page.tsx'
 import LoginCard from './app/login-card/page.tsx'
 import { AccountSettings } from './account-settings.tsx'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
-import { Layout, LayoutContent, LayoutHeader, HStack } from '@astryxdesign/core/Layout'
+import { Layout, LayoutContent, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout'
 import { Table } from '@astryxdesign/core/Table'
-import type { TableColumn } from '@astryxdesign/core/Table'
 import { AppShell } from '@astryxdesign/core/AppShell'
-import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Card } from '@astryxdesign/core/Card'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
-import { Link } from '@astryxdesign/core/Link'
 import { Text } from '@astryxdesign/core/Text'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { TopNav, TopNavHeading } from '@astryxdesign/core/TopNav'
@@ -25,7 +23,6 @@ import { neutralTheme } from '@astryxdesign/theme-neutral/built'
 import type { ContractView, Summary, Workspace } from '@clausid/contracts'
 import { api, ApiError, authClient, errorMessage, workspaceApi, workspaceAction } from './api.ts'
 import { openStore, project, useProjection } from './store.ts'
-import { statusVariant } from './status.ts'
 import type { AppStore } from './store.ts'
 import { ContractPage } from './contract-page.tsx'
 import type { CanvasHeader } from './app/canvas-editor/page.tsx'
@@ -35,6 +32,9 @@ import '@astryxdesign/theme-neutral/fonts.css'
 import '@astryxdesign/theme-neutral/theme.css'
 import './style.css'
 
+// Keep old bookmarks working after consolidating the contract list into Workspaces.
+if (/^\/contracts\/?$/.test(location.pathname)) history.replaceState(null, '', '/')
+
 const inviteMatch = location.pathname.match(/^\/(invite|workspace-invite)\/([\w-]+)$/)
 const isWorkspaceInvite = inviteMatch?.[1] === 'workspace-invite'
 const contractMatch = location.pathname.match(/^\/contracts\/([\w-]+)$/)
@@ -43,7 +43,7 @@ const query = new URLSearchParams(location.search)
 const selectedWorkspaceId = query.get('workspace')
 const selectedWorkspaceSlug = query.get('workspaceSlug')
 const hasWorkspaceSelection = selectedWorkspaceId !== null || selectedWorkspaceSlug !== null
-const workspaceLanding = !hasWorkspaceSelection && location.pathname !== '/contracts'
+const workspaceLanding = !hasWorkspaceSelection
 const workspaceHref = (workspace: Workspace) => workspace.slug && workspace.role !== 'member'
   ? '/?workspaceSlug=' + workspace.slug : '/?workspace=' + workspace.id
 const inviteKey = inviteMatch && 'clausid-invite:' + inviteMatch[1] + ':' + inviteMatch[2]
@@ -53,17 +53,18 @@ if (inviteKey && location.hash) {
   history.replaceState(null, '', location.pathname)
 }
 
-function Frame({ account, children, editorHeader }: {
+function Frame({ account, children, editorHeader, fillViewport = false }: {
   account?: { name: string; email: string }
   children: ReactNode
   editorHeader?: CanvasHeader
+  fillViewport?: boolean
 }) {
   return <AppShell
     topNav={<TopNav heading={<TopNavHeading heading="Clausid" headingHref="/" />}
       startContent={editorHeader?.start}
       endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} compact={editorHeader?.compact} />}</>} />}
     contentPadding={0}
-  >{editorHeader ? children : <div className="page-content">{children}</div>}</AppShell>
+  >{editorHeader || fillViewport ? children : <div className="page-content">{children}</div>}</AppShell>
 }
 
 function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
@@ -86,21 +87,26 @@ function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
   </div></Card></section>
 }
 
-const contractColumns: TableColumn<Summary>[] = [
-  { key: 'title', header: 'Contract', renderCell: ({ id, title }) => <Link href={'/contracts/' + id} weight="semibold">{title}</Link> },
-  { key: 'status', header: 'Status', renderCell: ({ status }) => <Badge label={status} variant={statusVariant[status]} /> },
-  { key: 'role', header: 'Role', renderCell: ({ role }) => <Text color="secondary">{role}</Text> },
-]
-
 function Dashboard({ store }: { store: AppStore }) {
   const row = useProjection(store, 'dashboard')
   const contracts = row ? JSON.parse(row.value) as Summary[] : null
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null)
   const selectedWorkspace = workspaces?.find(({ id, slug, role }) =>
     selectedWorkspaceSlug !== null ? slug === selectedWorkspaceSlug && role !== 'member' : id === selectedWorkspaceId)
-  const visibleContracts = selectedWorkspace
-    ? contracts?.filter(({ workspaceId }) => workspaceId === selectedWorkspace.id) ?? null
-    : contracts
+  const workspaceIds = new Set(workspaces?.map(({ id }) => id))
+  const contractsByWorkspace = new Map<string, Summary[]>()
+  const otherContracts: Summary[] = []
+  for (const contract of contracts ?? []) {
+    const { workspaceId } = contract
+    if (!workspaceId || !workspaceIds.has(workspaceId)) {
+      otherContracts.push(contract)
+      continue
+    }
+    const group = contractsByWorkspace.get(workspaceId)
+    if (group) group.push(contract)
+    else contractsByWorkspace.set(workspaceId, [contract])
+  }
+  const visibleContracts = selectedWorkspace && contracts ? contractsByWorkspace.get(selectedWorkspace.id) ?? [] : null
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -141,64 +147,59 @@ function Dashboard({ store }: { store: AppStore }) {
   }, [store])
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (selectedWorkspace?.role !== 'owner') return
     const title = String(new FormData(event.currentTarget).get('title'))
     setCreating(true)
     setCreateError('')
     try {
-      const contract = await api<ContractView>('', { title, requestId: createId, workspaceId: selectedWorkspace?.id })
+      const contract = await api<ContractView>('', { title, requestId: createId, workspaceId: selectedWorkspace.id })
       location.assign('/contracts/' + contract.id)
     } catch (reason) { setCreateError(errorMessage(reason)); setCreating(false) }
   }
+  if (workspaceLanding) return <WorkspacesTable workspaces={workspaces}
+    contractsByWorkspace={contracts === null ? null : contractsByWorkspace}
+    otherContracts={otherContracts} workspaceHref={workspaceHref} error={error}
+    onWorkspaceSaved={(saved) => setWorkspaces(previous => {
+      if (!previous) return [saved]
+      return previous.some(item => item.id === saved.id)
+        ? previous.map(item => item.id === saved.id ? saved : item)
+        : [saved, ...previous]
+    })}
+    onWorkspaceDeleted={(id) => setWorkspaces(previous => previous?.filter(item => item.id !== id) ?? null)} />
+
   // Astryx CLI 0.7.16, table template, using the live contract projection.
   return <>
-    <Layout header={<LayoutHeader hasDivider>
-      <HStack vAlign="center" hAlign="between">
-        <Heading level={1}>{workspaceLanding ? 'Workspaces' : 'Contracts'}</Heading>
-        <div className="actions">
-          {workspaceLanding ? <>
-            <Button label="All contracts" href="/contracts" />
-            <Button label="New workspace" href="/workspaces/new" variant="primary" />
-          </> : <>
-            <Button label="Workspaces" href="/" />
-            {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
-            {(!hasWorkspaceSelection || selectedWorkspace?.role === 'owner') &&
-              <Button label={selectedWorkspace ? 'Add document' : 'New contract'} variant="primary"
-                onClick={() => changeCreateOpen(true)} />}
-          </>}
-        </div>
+    <Layout height="fill" header={<LayoutHeader hasDivider padding={4}>
+      <HStack vAlign="center" hAlign="between" wrap="wrap" gap={3}>
+        <VStack gap={1}>
+          <Heading level={1}>{selectedWorkspace?.name ?? 'Workspace'}</Heading>
+          {selectedWorkspace?.project && <Text as="p" color="secondary">Project · {selectedWorkspace.project}</Text>}
+          {selectedWorkspace?.description && <Text as="p" color="secondary">{selectedWorkspace.description}</Text>}
+        </VStack>
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          <Button label="Workspaces" href="/" />
+          {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
+          {selectedWorkspace?.role === 'owner' && <Button label="Add document" variant="primary"
+            onClick={() => changeCreateOpen(true)} />}
+        </HStack>
       </HStack>
     </LayoutHeader>} content={<LayoutContent>
-      <div className="flow">
-        {error && <div role="alert"><Banner status="error" title={error} /></div>}
-        {workspaceLanding && (workspaces === null ? <Text role="status">Loading workspaces…</Text>
-          : workspaces.length === 0 ? <EmptyState title="No workspaces yet"
-            description="Create a workspace or accept an invitation from another party." />
-          : workspaces.map((workspace) => <Card key={workspace.id} padding={4}>
-            <div className="flow">
-              <Link href={workspaceHref(workspace)} weight="semibold">{workspace.name}</Link>
-              {workspace.description && <Text color="secondary">{workspace.description}</Text>}
-              <Badge label={workspace.role === 'member' ? 'Invited party' : 'Service provider'} variant="neutral" />
-            </div>
-          </Card>))}
-        {selectedWorkspace && <div>
-          <Heading level={2}>{selectedWorkspace.name}</Heading>
-          {selectedWorkspace.description && <Text as="p" color="secondary">{selectedWorkspace.description}</Text>}
-        </div>}
-        {!workspaceLanding && (hasWorkspaceSelection && workspaces && !selectedWorkspace ? <EmptyState title="Workspace unavailable"
-          actions={<Button label="Back to contracts" href="/" />} />
+      <VStack gap={5}>
+        {error && <Banner status="error" title={error} role="alert" />}
+        {workspaces && !selectedWorkspace ? <EmptyState title="Workspace unavailable" />
           : visibleContracts === null ? <Text role="status">Loading contracts…</Text>
           : visibleContracts.length === 0 ? <EmptyState title="No contracts yet"
             description={selectedWorkspace?.role === 'member' ? 'Contracts appear here when the service provider shares them.'
-              : selectedWorkspace ? 'Create the first contract in this workspace.' : 'Create a contract or accept an invitation to get started.'} />
-          : <Table<Summary> data={visibleContracts} columns={contractColumns} idKey="id" hasHover aria-label="Your contracts" />)}
-      </div>
+              : 'Create the first contract in this workspace.'} />
+          : <Table<Summary> data={visibleContracts} columns={contractColumns} idKey="id" hasHover aria-label="Your contracts" />}
+      </VStack>
     </LayoutContent>} />
     <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form" padding={0}>
-      <Layout header={<DialogHeader title={selectedWorkspace ? 'Add document' : 'New contract'} onOpenChange={changeCreateOpen} />} content={<LayoutContent>
+      <Layout header={<DialogHeader title="Add document" onOpenChange={changeCreateOpen} />} content={<LayoutContent>
         <form onSubmit={create} className="template-form">
           <TextInput label="Contract title" htmlName="title" placeholder="e.g. Services agreement" width="100%"
             isRequired {...{ required: true, maxLength: 160 }} value={titleValue} onChange={setTitleValue} />
-          {createError && <div role="alert"><Banner status="error" title={createError} /></div>}
+          {createError && <Banner status="error" title={createError} role="alert" />}
           <HStack hAlign="end" gap={2}>
             <Button label="Cancel" isDisabled={creating} onClick={() => changeCreateOpen(false)} />
             <Button label="Create contract" type="submit" variant="primary" isLoading={creating} />
@@ -225,7 +226,7 @@ function StoreGate({ account }: { account: { name: string; email: string } }) {
     return <ContractPage id={contractMatch[1]} store={store} account={account}
       renderPage={(content, editorHeader) => <Frame account={account} editorHeader={editorHeader}>{content}</Frame>} />
   }
-  return <Frame account={account}>
+  return <Frame account={account} fillViewport={Boolean(store)}>
     {error ? <div role="alert"><Banner status="error" title={error} /></div>
       : !store ? <p role="status">Opening workspace…</p>
       : <Dashboard store={store} />}
