@@ -1,11 +1,10 @@
-import WorkspacesTable, { contractColumns } from './app/table-grouped/page.tsx'
+import WorkspacesTable, { WorkspaceContractsTable } from './app/table-grouped/page.tsx'
 import { WorkspacePartiesDialog } from './workspace-parties.tsx'
 import WorkspaceWizard from './app/form-wizard/page.tsx'
 import LoginCard from './app/login-card/page.tsx'
 import { AccountSettings } from './account-settings.tsx'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { Layout, LayoutContent, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout'
-import { Table } from '@astryxdesign/core/Table'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Card } from '@astryxdesign/core/Card'
@@ -191,7 +190,8 @@ function Dashboard({ store }: { store: AppStore }) {
           : visibleContracts.length === 0 ? <EmptyState title="No contracts yet"
             description={selectedWorkspace?.role === 'member' ? 'Contracts appear here when the service provider shares them.'
               : 'Create the first contract in this workspace.'} />
-          : <Table<Summary> data={visibleContracts} columns={contractColumns} idKey="id" hasHover aria-label="Your contracts" />}
+          : <WorkspaceContractsTable contracts={visibleContracts} canManage={selectedWorkspace?.role === 'owner'}
+              onDeleted={id => project(store, 'dashboard', (contracts ?? []).filter(contract => contract.id !== id))} />}
       </VStack>
     </LayoutContent>} />
     <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form" padding={0}>

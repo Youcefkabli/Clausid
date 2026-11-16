@@ -60,7 +60,7 @@ export const clientMessage = z.discriminatedUnion('type', [
 
 export type Status = 'Draft' | 'Awaiting signatures' | 'Signed' | 'Voided'
 export type Role = 'owner' | 'editor' | 'signer'
-export type Summary = { id: string; title: string; status: Status; role: Role; workspaceId?: string }
+export type Summary = { id: string; title: string; status: Status; role: Role; workspaceId?: string; hasSignatures?: boolean }
 export type Signature = {
   versionId: string
   digest: string

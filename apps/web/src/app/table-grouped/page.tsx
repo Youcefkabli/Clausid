@@ -31,7 +31,7 @@ import { ArrowRightIcon, DocumentDuplicateIcon, EllipsisHorizontalIcon, PencilIc
 import { rtlStyles } from '@astryxdesign/core/utils'
 import type { Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
 import { workspaceProject, workspaceStatuses } from '@clausid/contracts'
-import { workspaceAction, workspaceApi, errorMessage } from '../../api.ts'
+import { api, workspaceAction, workspaceApi, errorMessage } from '../../api.ts'
 import { statusVariant } from '../../status.ts'
 
 const contractRole: Record<Summary['role'], string> = { owner: 'Owner', editor: 'Collaborator', signer: 'Signer' }
@@ -73,6 +73,79 @@ export const contractColumns: TableColumn<Summary>[] = [
     <StatusLabel label={status} variant={statusVariant[status]} /> },
   { key: 'role', header: 'Role', width: proportional(1), renderCell: ({ role }) => <Text color="secondary">{contractRole[role]}</Text> },
 ]
+
+function ContractActions({ contract, canManage, onSaved }: { contract: Summary; canManage: boolean; onSaved: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const owner = canManage && contract.role === 'owner'
+  const locked = contract.hasSignatures || contract.status === 'Signed'
+  return <>
+    <DropdownMenu
+      button={{ label: 'Actions for ' + contract.title, isIconOnly: true, variant: 'ghost', size: 'sm',
+        icon: <Icon icon={EllipsisHorizontalIcon} size="sm" /> }}
+      hasChevron={false} alignment="end"
+      items={[
+        { label: 'Open in Canvas', onClick: () => location.assign('/contracts/' + contract.id) },
+        ...(owner ? [
+          { type: 'divider' as const },
+          { label: 'Delete contract', icon: TrashIcon, variant: 'destructive' as const, isDisabled: locked,
+            description: locked ? 'A signature has been recorded.' : undefined,
+            onClick: () => setConfirming(true) },
+        ] : []),
+      ]}
+    />
+    {confirming && <DeleteConfirmation title="Delete contract" locked={locked}
+      description={`Delete “${contract.title}” and its negotiation history from the workspace? This is permanent.`}
+      close={() => setConfirming(false)} remove={async () => {
+        await api('/' + contract.id + '/delete', {})
+        onSaved()
+      }} />}
+  </>
+}
+
+export function WorkspaceContractsTable({ contracts, canManage, onDeleted }: {
+  contracts: Summary[]; canManage: boolean; onDeleted: (id: string) => void
+}) {
+  const columns: TableColumn<Summary>[] = [
+    ...contractColumns,
+    { key: 'actions', header: '', width: pixel(48), renderCell: contract =>
+      <ContractActions contract={contract} canManage={canManage} onSaved={() => onDeleted(contract.id)} /> },
+  ]
+  return <Table<Summary> data={contracts} columns={columns} idKey="id" hasHover aria-label="Your contracts" />
+}
+
+function DeleteConfirmation({ title, description, close, remove, locked = false }: {
+  title: string; description: string; close: () => void; remove: () => Promise<unknown>; locked?: boolean
+}) {
+  const [error, setError] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  async function confirm() {
+    if (locked || deleting) return
+    setDeleting(true)
+    setError('')
+    try {
+      await remove()
+      close()
+    } catch (reason) {
+      setError(errorMessage(reason))
+      setDeleting(false)
+    }
+  }
+  const onOpenChange = (open: boolean) => { if (!open && !deleting) close() }
+  return <Dialog isOpen onOpenChange={onOpenChange} purpose="form">
+    <Layout header={<DialogHeader title={title} onOpenChange={onOpenChange} />}
+      content={<LayoutContent padding={4}>
+        <VStack gap={3}>
+          <Text>{description}</Text>
+          {locked && <Banner role="alert" status="warning" title="A signature has been recorded." />}
+          {error && <Banner role="alert" status="error" title={error} />}
+          <HStack gap={2}>
+            <Button label="Cancel" onClick={close} isDisabled={deleting} />
+            <Button label={title} variant="destructive" isDisabled={locked} isLoading={deleting} clickAction={confirm} />
+          </HStack>
+        </VStack>
+      </LayoutContent>} />
+  </Dialog>
+}
 
 const workspaceActionTitle = { edit: 'Edit workspace', assign: 'Assign to…', label: 'Add label', duplicate: 'Duplicate workspace', move: 'Move to project' } as const
 type WorkspaceAction = keyof typeof workspaceActionTitle

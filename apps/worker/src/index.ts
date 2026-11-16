@@ -100,6 +100,14 @@ export class Directory extends DurableObject<Env> {
           ...sql.exec<{workspace: string}>('SELECT workspace FROM workspace_access').toArray().map(({ workspace }) => JSON.parse(workspace)),
         ])
       }
+      if (request.method === 'DELETE') {
+        const id = identifier.parse(path.slice(1))
+        this.ctx.storage.transactionSync(() => {
+          sql.exec('DELETE FROM workspace_contracts WHERE id = ?', id)
+          sql.exec('DELETE FROM contracts WHERE id = ?', id)
+        })
+        return new Response(null, { status: 204 })
+      }
       if (request.method === 'PUT') {
         const id = identifier.parse(path.slice(1))
         const url = new URL(request.url)
@@ -259,8 +267,8 @@ async function route(request: Request, env: Env) {
         for (const [offset, view] of views.entries()) {
           if (view.status === 404) continue
           if (!view.ok) throw new HttpError(503, 'A contract could not be loaded.')
-          const { id, title, role, status } = await view.json<ContractView>()
-          summaries.push({ id, title, role, status, workspaceId: batch[offset].workspaceId ?? undefined })
+          const { id, title, role, status, hasSignatures } = await view.json<ContractView>()
+          summaries.push({ id, title, role, status, hasSignatures, workspaceId: batch[offset].workspaceId ?? undefined })
         }
       }
       return Response.json(summaries)
@@ -299,6 +307,11 @@ async function route(request: Request, env: Env) {
   if (method === 'POST' && action === 'redeem') {
     const body = redeemInvite.parse(await readJson(request))
     return actor(env, id, account, action, json(body))
+  }
+  if (method === 'POST' && action === 'delete') {
+    const entry = await contractWorkspace()
+    if (entry && !await isServiceProvider(entry.workspaceId)) throw providerRequired()
+    return actor(env, id, account, 'delete', { method: 'POST' })
   }
   if (method === 'POST' && /^(invite|preview|freeze|duplicate|revoke\/[^/]+)$/.test(action)) {
     const entry = await contractWorkspace()

@@ -18,6 +18,7 @@ type Version = { id: string; digest: string; signers: string[]; frozenAt: string
 type Mail = { id: string; email: string; token: string; role: Invite['role'] }
 type RecordState = {
   id: string; title: string; owner: Member; editors: Member[]; signers: Member[]
+  deletion?: { accounts?: string[] }
   status: Status; revision: number; invites: Invite[]; preview: Preview | null
   version: Version | null; signatures: Signature[]; outbox: Mail[]; voidedAt?: string
 }
@@ -61,6 +62,7 @@ export class Contract extends DurableObject<Env> {
     this.#state = state
   }
   #role(state: RecordState, actor: Account): Role | undefined {
+    if (state.deletion) return
     if (actor.id === state.owner.id) return 'owner'
     if (state.status === 'Draft' && state.editors.some((member) => member.id === actor.id)) return 'editor'
     if (state.signers.some((member) => member.id === actor.id && member.email === actor.email)) return 'signer'
@@ -69,6 +71,7 @@ export class Contract extends DurableObject<Env> {
     const role = this.#role(state, account)
     if (!role) throw absent()
     return {
+      hasSignatures: state.signatures.length > 0 || state.status === 'Signed',
       id: state.id, title: state.title, status: state.status, revision: state.revision, role,
       editors: role === 'signer' ? [] : [state.owner, ...state.editors],
       invites: role === 'owner' && state.status === 'Draft'
@@ -120,12 +123,58 @@ export class Contract extends DurableObject<Env> {
     return this.#serial(() => safeResponse(() => this.#route(request)))
   }
 
+  async #finishDeletion(state: RecordState) {
+    const pending = state.deletion
+    if (!pending?.accounts?.length) return
+    await this.ctx.storage.setAlarm(Date.now() + 60_000)
+    try {
+      const responses = await Promise.all(pending.accounts.map(id =>
+        this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(id))
+          .fetch('https://directory/' + state.id, { method: 'DELETE' })))
+      if (responses.some(response => !response.ok)) throw new Error('Directory cleanup failed')
+      this.#save({ ...state, deletion: {} })
+    } catch {
+      console.error('Contract directory cleanup will retry')
+    }
+  }
+
   async #route(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url)
     const account: Account = JSON.parse(decodeURIComponent(request.headers.get('x-clausid-account')!))
     const contractId = request.headers.get('x-clausid-contract')!
     const action = pathname.slice(1)
     let state = this.#state
+    if (action === 'delete') {
+      if (!state) throw absent()
+      if (state.owner.id !== account.id) throw new HttpError(403, 'Only the contract owner can delete this contract.')
+      if (state.signatures.length || state.status === 'Signed') {
+        throw new HttpError(409, 'A contract with a recorded signature cannot be deleted.')
+      }
+      if (!state.deletion) {
+        const accounts = [...new Set([state.owner, ...state.editors, ...state.signers].map(({ id }) => id))]
+        await this.ctx.storage.setAlarm(Date.now() + 60_000)
+        state = {
+          id: state.id, title: '', owner: state.owner, editors: [], signers: [], status: state.status,
+          revision: state.revision, invites: [], preview: null, version: null, signatures: [], outbox: [],
+          deletion: { accounts },
+        }
+        this.#save(state, () => {
+          this.ctx.storage.sql.exec('DELETE FROM files')
+          this.ctx.storage.sql.exec('DELETE FROM edits')
+        })
+        this.#draft.destroy()
+        this.#draft = new Y.Doc()
+        this.#publish(state)
+      }
+      await this.#finishDeletion(state)
+      return new Response(null, { status: 204 })
+    }
+    if (state?.deletion) {
+      if (state.owner.id === account.id && ['create', 'create-copy'].includes(action)) {
+        throw new HttpError(410, 'This contract was deleted.')
+      }
+      throw absent()
+    }
     if (action === 'create' || action === 'create-copy') {
       if (state) {
         if (state.owner.id !== account.id) throw absent()
@@ -315,6 +364,10 @@ export class Contract extends DurableObject<Env> {
   }
   alarm() {
     return this.#serial(async () => {
+      if (this.#state?.deletion) {
+        await this.#finishDeletion(this.#state)
+        return
+      }
       for (const socket of this.ctx.getWebSockets()) {
         const { account } = socket.deserializeAttachment() as Attachment
         if (account.expires <= Date.now()) socket.close(4012, 'Refresh session')
