@@ -25,6 +25,7 @@ export function connectContract(
   let timer: ReturnType<typeof setTimeout>
   let retry = 400
   let ready = false
+  let writable = false
   let ended = false
   let error = ''
   const pending = new Map<string, string>()
@@ -34,6 +35,7 @@ export function connectContract(
   }
   let presenceClock = 0
   function presence() {
+    if (!writable) return
     send({ type: 'presence', clientId: doc.clientID, clock: (presenceClock += 2), cursor: awareness.getLocalState()?.cursor ?? null })
   }
   function clearPresence() {
@@ -42,7 +44,7 @@ export function connectContract(
     for (const key of others) awareness.meta.delete(key)
   }
   function update(bytes: Uint8Array, origin: unknown) {
-    if (origin === remote) return
+    if (origin === remote || !writable) return
     const updateId = crypto.randomUUID()
     pending.set(updateId, toBase64(bytes))
     send({ type: 'edit', id: updateId, update: pending.get(updateId) })
@@ -55,11 +57,12 @@ export function connectContract(
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as ServerMessage
       if (message.type === 'state') {
+        writable = message.contract.status === 'Draft'
         if (message.draft !== undefined) Y.applyUpdate(doc, fromBase64(message.draft), remote)
         if (!ready) {
           ready = true
           retry = 400
-          if (message.contract.status === 'Draft') {
+          if (writable) {
             for (const [id, update] of pending) send({ type: 'edit', id, update })
             presence()
           } else if (pending.size) {

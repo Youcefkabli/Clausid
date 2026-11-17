@@ -1529,6 +1529,21 @@ function ShadowFields({
 
 export type CanvasHeader = {start: React.ReactNode; end: React.ReactNode; compact: boolean};
 
+function CanvasDocumentTab({title, compact, onSelect}: {
+  title: string;
+  compact: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <HStack role="group" aria-label="Open documents" gap={0} vAlign="center"
+      paddingInline={compact ? 0 : 2} paddingBlock={0.5} isScrollable
+      maxWidth={compact ? 96 : TAB_MAX_WIDTH} xstyle={styles.tabStrip}>
+      <DocumentTab tab={{id: 'contract', name: title, icon: FileIcon}}
+        isActive onSelect={onSelect} onClose={() => location.assign('/')} />
+    </HStack>
+  );
+}
+
 type LiveDocument = {
   renderShell: (content: React.ReactNode, header: CanvasHeader) => React.ReactNode;
   title: string;
@@ -1537,6 +1552,7 @@ type LiveDocument = {
   name: string;
   editable: boolean;
   syncStatus?: string;
+  frozen?: {pdf: React.ReactNode; exportActions: React.ReactNode};
   onShare?: () => void;
   onPrepare?: () => void;
   canPrepare: boolean;
@@ -1544,10 +1560,11 @@ type LiveDocument = {
 };
 
 export default function CanvasEditor({
-  title, document, awareness, name, editable, syncStatus, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
+  title, document, awareness, name, editable, syncStatus, frozen, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
 }: LiveDocument) {
   const narrow = useMediaQuery('(max-width: 900px)');
   const compactHeader = useMediaQuery('(max-width: 640px)');
+  const artboard = useRef<HTMLElement>(null);
   const contractEditor = useEditor({
     extensions: [
       StarterKit.configure({link: false, undoRedo: false, trailingNode: false}),
@@ -1792,27 +1809,11 @@ export default function CanvasEditor({
           </DropdownMenuSubMenu>
         </DropdownMenu>
 
-        {/*
-          A group, not a nav landmark: a landmark inside a
-          role="toolbar" is not a place a screen reader expects one,
-          and the toolbar already is the region. The group gives the
-          strip a name, and each tab says whether it is the open
-          document with aria-current.
-        */}
-        <HStack
-          role="group"
-          aria-label="Open documents"
-          gap={0}
-          vAlign="center"
-          paddingInline={compactHeader ? 0 : 2}
-          paddingBlock={0.5}
-          isScrollable
-          maxWidth={compactHeader ? 96 : TAB_MAX_WIDTH}
-          xstyle={styles.tabStrip}>
-          <DocumentTab tab={{id: 'contract', name: title, icon: FileIcon}}
-            isActive onSelect={() => contractEditor?.commands.focus()}
-            onClose={() => location.assign('/')} />
-        </HStack>
+        <CanvasDocumentTab title={title} compact={compactHeader}
+          onSelect={() => {
+            if (frozen) artboard.current?.focus();
+            else contractEditor?.commands.focus();
+          }} />
       </HStack>
     ),
     end: (
@@ -1823,8 +1824,10 @@ export default function CanvasEditor({
         <DropdownMenu button={{label: 'Export', variant: 'ghost', size: 'sm',
           isIconOnly: compactHeader, tooltip: compactHeader ? 'Export' : undefined,
           icon: <Icon icon={Download} size={ICON} />}} alignment="end">
-          <DropdownMenuItem label="Share" isDisabled={!onShare} onClick={onShare} />
-          <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare || !onPrepare} onClick={onPrepare} />
+          {frozen ? frozen.exportActions : <>
+            <DropdownMenuItem label="Share" isDisabled={!onShare} onClick={onShare} />
+            <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare || !onPrepare} onClick={onPrepare} />
+          </>}
         </DropdownMenu>
       </HStack>
     ),
@@ -1937,6 +1940,10 @@ export default function CanvasEditor({
                         padding={4}
                         content={
                           <LayoutContent padding={narrow ? 2 : 6} isScrollable>
+                            {frozen && compactHeader && <VStack gap={1} paddingBlock={2}>
+                              <Text weight="semibold">{title}</Text>
+                              <Text type="supporting" color="secondary">{syncStatus}</Text>
+                            </VStack>}
                             <HStack
                               width="max-content"
                               height="max-content"
@@ -1950,8 +1957,9 @@ export default function CanvasEditor({
                                   minHeight={FRAME.height}
                                   style={{zoom: scale}}
                                   xstyle={styles.artboardCentered}>
-                                  <article aria-label="Contract artboard" className="canvas-contract-text">
-                                    <EditorContent editor={contractEditor} />
+                                  <article aria-label="Contract artboard" className="canvas-contract-text"
+                                    ref={artboard} tabIndex={frozen ? -1 : undefined}>
+                                    {frozen ? frozen.pdf : <EditorContent editor={contractEditor} />}
                                   </article>
                                 </Card>
                               </Theme>
@@ -2083,6 +2091,7 @@ export default function CanvasEditor({
                         isScrollable
                         label={`${selected.name} properties`}
                         xstyle={styles.foldsAtInspector}>
+                        <VStack inert={Boolean(frozen)}>
                         <InspectorSection title="Layout">
                           <InspectorRow label="Padding">
                             <AxisInput
@@ -2572,6 +2581,7 @@ export default function CanvasEditor({
                             </InspectorSection>
                           </>
                         )}
+                        </VStack>
                       </LayoutPanel>
                     </>
                   ) : undefined
