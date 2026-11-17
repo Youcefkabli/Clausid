@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { expect, test } from '@playwright/test'
 import { strFromU8, unzipSync } from 'fflate'
@@ -428,6 +429,89 @@ test('only the service provider can share a workspace draft and approve it for s
     for (const action of ['share-workspace', 'invite', 'preview', 'freeze']) {
       expect((await post(party.request, '/api' + contractPath + '/' + action, {})).status()).toBe(403)
     }
+
+    const uploadedTitle = 'Studio Services Agreement'
+    const originalPdf = await readFile(new URL('../packages/pdf-engine/tests/fixtures/pdf-lib-subset.pdf', import.meta.url))
+    const workspacePath = '/?workspace=' + id
+    await owner.goto(workspacePath)
+    await owner.getByRole('button', { name: 'Add document' }).click()
+    await owner.locator('input[type=file]').setInputFiles({
+      name: uploadedTitle + '.pdf', mimeType: 'application/pdf', buffer: originalPdf,
+    })
+    await owner.getByRole('button', { name: 'Upload PDF', exact: true }).click()
+    const sourceCanvas = owner.getByRole('group', { name: 'Contract PDF', exact: true })
+    await expect(sourceCanvas).toContainText(/within\s+15\s+business\s+days/)
+    const uploadedPath = new URL(owner.url()).pathname
+    const uploadedApi = '/api' + uploadedPath
+    expect((await party.request.get(uploadedApi + '/source-pdf')).status()).toBe(404)
+
+    await owner.getByRole('button', { name: 'Export', exact: true }).click()
+    await owner.getByRole('menuitem', { name: 'Share', exact: true }).click()
+    await owner.getByRole('button', { name: 'Share with workspace' }).click()
+    await expect(owner.getByText('Workspace parties can now edit this draft.')).toBeVisible()
+    await owner.getByRole('button', { name: 'Done', exact: true }).click()
+    await party.goto(workspacePath)
+    await party.getByRole('link', { name: uploadedTitle, exact: true }).click()
+    await expect(party).toHaveURL(origin + uploadedPath)
+
+    await party.getByRole('button', { name: 'Annotations', exact: true }).click()
+    await party.getByRole('checkbox', { name: 'Propose a text replacement' }).check()
+    await party.getByRole('combobox', { name: 'Source line' }).click()
+    await party.getByRole('option', { name: /^\d+\. 15$/ }).click()
+    await expect(party.getByRole('textbox', { name: 'Text to replace' })).toHaveValue('15')
+    await party.getByRole('textbox', { name: 'Replacement text' }).fill('10')
+    await party.getByRole('button', { name: 'Add annotation' }).click()
+    await expect(party.getByText('Replacement: 10', { exact: true })).toBeVisible()
+    const proposed = await party.request.get(uploadedApi).then(response => response.json())
+    expect((await post(party.request, uploadedApi + '/annotation', {
+      action: 'decide', id: proposed.annotations[0].id, decision: 'Approved',
+    })).status()).toBe(403)
+    expect((await post(owner.request, uploadedApi + '/preview', {
+      revision: proposed.revision, signers: [ownerEmail],
+    })).status()).toBe(409)
+
+    await owner.getByRole('button', { name: 'Annotations', exact: true }).click()
+    const history = owner.getByRole('dialog', { name: 'PDF annotations' })
+    await history.getByRole('button', { name: 'Approve', exact: true }).click()
+    await expect(history.getByText('Approved', { exact: true })).toBeVisible()
+    await history.getByRole('button', { name: 'Close', exact: true }).click()
+    const deadline = /within\s+10\s+business\s+days/
+    await expect(owner.getByRole('group', { name: 'Clean negotiated PDF' })).toContainText(deadline)
+    const approved = await owner.request.get(uploadedApi).then(response => response.json())
+    const negotiated = await owner.request.get(uploadedApi + '/negotiated-pdf/' + approved.negotiatedPdf.digest)
+    expect(negotiated.ok()).toBe(true)
+    const negotiatedBytes = await negotiated.body()
+    expect(negotiatedBytes.equals(originalPdf)).toBe(false)
+    expect(await (await owner.request.get(uploadedApi + '/source-pdf')).body()).toEqual(originalPdf)
+
+    const ownerExport = owner.getByRole('button', { name: 'Export', exact: true })
+    await ownerExport.click()
+    await owner.getByRole('menuitem', { name: 'Prepare for signing', exact: true }).click()
+    await owner.getByLabel('Signer email addresses').fill(ownerEmail)
+    await owner.getByRole('button', { name: 'Generate PDF preview' }).click()
+    await expect(owner.getByRole('group', { name: 'Signing preview PDF' })).toContainText(deadline)
+    await owner.getByRole('button', { name: 'Freeze and send' }).click()
+
+    async function reopenPdf(status: string) {
+      await owner.goto(workspacePath)
+      const row = owner.getByRole('table', { name: 'Your contracts' }).getByRole('row').filter({ hasText: uploadedTitle })
+      await expect(row.getByRole('cell', { name: status, exact: true })).toBeVisible()
+      await row.getByRole('link', { name: uploadedTitle, exact: true }).click()
+      await expect(owner).toHaveURL(origin + uploadedPath)
+      await expect(owner.getByRole('article', { name: 'Contract artboard' })).toContainText(deadline)
+    }
+    await reopenPdf('Awaiting signatures')
+    await ownerExport.click()
+    await owner.getByRole('menuitem', { name: 'Sign contract', exact: true }).click()
+    const signing = owner.getByRole('dialog', { name: 'Signatures' })
+    await signing.getByLabel('Full name').fill('Service Provider')
+    await signing.getByRole('checkbox').check()
+    await signing.getByRole('button', { name: 'Sign contract', exact: true }).click()
+    await expect(owner.getByRole('status').filter({ hasText: /^Signed$/ })).toBeVisible()
+    await reopenPdf('Signed')
+    expect(await (await owner.request.get(uploadedApi + '/pdf')).body()).toEqual(negotiatedBytes)
+    await owner.getByRole('button', { name: 'Annotations', exact: true }).click()
+    await expect(history.getByText('Approved', { exact: true })).toBeVisible()
   } finally {
     await firstContext.close()
     await secondContext.close()

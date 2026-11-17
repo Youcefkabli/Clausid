@@ -3,15 +3,11 @@ import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protoc
 import { createEncoder, writeVarString, writeVarUint, toUint8Array } from 'lib0/encoding'
 import type { ServerMessage } from '@clausid/contracts'
 import { api, ApiError } from './api.ts'
+import { toBase64 } from './base64.ts'
 
 export type ConnectionState = { ready: boolean; pending: number; error: string; ended: boolean }
 const remote = Symbol('server')
 const fromBase64 = (value: string) => Uint8Array.from(atob(value), (character) => character.charCodeAt(0))
-function toBase64(value: Uint8Array) {
-  let text = ''
-  for (let index = 0; index < value.length; index += 8192) text += String.fromCharCode(...value.subarray(index, index + 8192))
-  return btoa(text)
-}
 
 export function connectContract(
   id: string,
@@ -57,7 +53,7 @@ export function connectContract(
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as ServerMessage
       if (message.type === 'state') {
-        writable = message.contract.status === 'Draft'
+        writable = message.contract.status === 'Draft' && !message.contract.sourcePdf
         if (message.draft !== undefined) Y.applyUpdate(doc, fromBase64(message.draft), remote)
         if (!ready) {
           ready = true

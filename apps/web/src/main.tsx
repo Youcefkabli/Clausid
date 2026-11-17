@@ -7,6 +7,7 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { Layout, LayoutContent, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { Banner } from '@astryxdesign/core/Banner'
+import { FileInput } from '@astryxdesign/core/FileInput'
 import { Card } from '@astryxdesign/core/Card'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
@@ -19,6 +20,7 @@ import { createRoot } from 'react-dom/client'
 import { Button } from '@astryxdesign/core/Button'
 import { Theme } from '@astryxdesign/core/theme'
 import { neutralTheme } from '@astryxdesign/theme-neutral/built'
+import { titleInput, workspaceDocumentLimit } from '@clausid/contracts'
 import type { ContractView, Summary, Workspace } from '@clausid/contracts'
 import { api, ApiError, authClient, errorMessage, workspaceApi, workspaceAction } from './api.ts'
 import { openStore, project, useProjection } from './store.ts'
@@ -109,6 +111,7 @@ function Dashboard({ store }: { store: AppStore }) {
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [titleValue, setTitleValue] = useState('')
+  const [file, setFile] = useState<File | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createError, setCreateError] = useState('')
   const [createId, setCreateId] = useState(() => crypto.randomUUID())
@@ -117,6 +120,7 @@ function Dashboard({ store }: { store: AppStore }) {
     setCreateOpen(open)
     if (open) {
       setTitleValue('')
+      setFile(null)
       setCreateError('')
       setCreateId(crypto.randomUUID())
     }
@@ -147,11 +151,20 @@ function Dashboard({ store }: { store: AppStore }) {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (selectedWorkspace?.role !== 'owner') return
-    const title = String(new FormData(event.currentTarget).get('title'))
+    const fallback = file?.name.replace(/\.pdf$/i, '').trim().slice(0, 160) || 'Contract'
+    const title = titleInput.safeParse(titleValue.trim() || (file ? fallback : ''))
+    if (!title.success) { setCreateError('Enter a contract title or choose a PDF.'); return }
     setCreating(true)
     setCreateError('')
     try {
-      const contract = await api<ContractView>('', { title, requestId: createId, workspaceId: selectedWorkspace.id })
+      let document
+      if (file) {
+        const { prepareWorkspaceDocument } = await import('./workspace-document.ts')
+        document = await prepareWorkspaceDocument(file)
+      }
+      const contract = await api<ContractView>('', {
+        title: title.data, requestId: createId, workspaceId: selectedWorkspace.id, document,
+      })
       location.assign('/contracts/' + contract.id)
     } catch (reason) { setCreateError(errorMessage(reason)); setCreating(false) }
   }
@@ -194,16 +207,21 @@ function Dashboard({ store }: { store: AppStore }) {
               onDeleted={id => project(store, 'dashboard', (contracts ?? []).filter(contract => contract.id !== id))} />}
       </VStack>
     </LayoutContent>} />
-    <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form" padding={0}>
+    <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form">
       <Layout header={<DialogHeader title="Add document" onOpenChange={changeCreateOpen} />} content={<LayoutContent>
-        <form onSubmit={create} className="template-form">
-          <TextInput label="Contract title" htmlName="title" placeholder="e.g. Services agreement" width="100%"
-            isRequired {...{ required: true, maxLength: 160 }} value={titleValue} onChange={setTitleValue} />
-          {createError && <Banner status="error" title={createError} role="alert" />}
-          <HStack hAlign="end" gap={2}>
-            <Button label="Cancel" isDisabled={creating} onClick={() => changeCreateOpen(false)} />
-            <Button label="Create contract" type="submit" variant="primary" isLoading={creating} />
-          </HStack>
+        <form onSubmit={create}>
+          <VStack gap={3}>
+            <FileInput label="PDF document" mode="dropzone" accept=".pdf,application/pdf" maxSize={workspaceDocumentLimit}
+              value={file} isDisabled={creating} description="PDF with selectable text, up to 1 MB."
+              onChange={value => { setFile(Array.isArray(value) ? value[0] ?? null : value); setCreateError('') }} />
+            <TextInput label="Contract title" placeholder={file ? file.name.replace(/\.pdf$/i, '') : 'e.g. Services agreement'}
+              width="100%" value={titleValue} onChange={setTitleValue} isRequired={!file} isDisabled={creating} />
+            {createError && <Banner status="error" title={createError} role="alert" />}
+            <HStack hAlign="end" gap={2}>
+              <Button label="Cancel" isDisabled={creating} onClick={() => changeCreateOpen(false)} />
+              <Button label={file ? 'Upload PDF' : 'Create contract'} type="submit" variant="primary" isLoading={creating} />
+            </HStack>
+          </VStack>
         </form>
       </LayoutContent>} />
     </Dialog>

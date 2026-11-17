@@ -78,6 +78,7 @@ import {
   Lock,
   LockOpen,
   Menu,
+  MessageSquare,
   Minus,
   PanelBottom,
   PanelLeft,
@@ -1553,6 +1554,7 @@ type LiveDocument = {
   editable: boolean;
   syncStatus?: string;
   frozen?: {pdf: React.ReactNode; exportActions: React.ReactNode};
+  onAnnotations?: () => void;
   onShare?: () => void;
   onPrepare?: () => void;
   canPrepare: boolean;
@@ -1560,7 +1562,7 @@ type LiveDocument = {
 };
 
 export default function CanvasEditor({
-  title, document, awareness, name, editable, syncStatus, frozen, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
+  title, document, awareness, name, editable, syncStatus, frozen, onAnnotations, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
 }: LiveDocument) {
   const narrow = useMediaQuery('(max-width: 900px)');
   const compactHeader = useMediaQuery('(max-width: 640px)');
@@ -1821,6 +1823,8 @@ export default function CanvasEditor({
         {syncStatus && (compactHeader
           ? <VisuallyHidden as="span" role="status">{syncStatus}</VisuallyHidden>
           : <Text type="supporting" color="secondary" role="status">{syncStatus}</Text>)}
+        {onAnnotations && <IconButton label="Annotations" tooltip="Annotations" variant="ghost" size="sm"
+          icon={<Icon icon={MessageSquare} size="sm" />} onClick={onAnnotations} />}
         <DropdownMenu button={{label: 'Export', variant: 'ghost', size: 'sm',
           isIconOnly: compactHeader, tooltip: compactHeader ? 'Export' : undefined,
           icon: <Icon icon={Download} size={ICON} />}} alignment="end">

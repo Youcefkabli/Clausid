@@ -1,14 +1,17 @@
 import { DurableObject } from 'cloudflare:workers'
-import { createContract, createWorkspace, identifier, redeemInvite } from '@clausid/contracts'
+import { PDFDocument } from 'pdf-lib'
+import { createContract, createWorkspace, identifier, redeemInvite, workspaceDocument, workspaceDocumentLimit } from '@clausid/contracts'
 import type { ContractView, Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
 import { workspaceSharing } from './workspace-sharing.ts'
 import { Contract } from './contract.ts'
-import { HttpError, internal, readJson, safeResponse } from './http.ts'
+import { inspectPdf } from './pdf-rewrite.ts'
+import { decode, HttpError, internal, readJson, safeResponse } from './http.ts'
 import type { Account, Env } from './http.ts'
 
 type WorkspaceRow = Pick<Workspace, 'id' | 'name' | 'description' | 'slug' | 'project' | 'createdAt'>
 
 const workspaceSelect = 'SELECT workspaces.id, name, description, slug, project, created AS createdAt FROM workspaces LEFT JOIN workspace_slugs USING (id) LEFT JOIN workspace_projects USING (id)'
+const workspaceDocumentRequestLimit = 4 * Math.ceil(workspaceDocumentLimit / 3) + 16_384
 const workspaceReady = 'NOT EXISTS (SELECT 1 FROM workspace_requests WHERE workspace_id = workspaces.id AND ready = 0)'
 
 export { Contract }
@@ -139,6 +142,36 @@ function actor(env: Env, id: string, account: Account, action: string, request?:
   headers.set('x-clausid-contract', id)
   return env.CONTRACTS.get(env.CONTRACTS.idFromName(id)).fetch('https://contract/' + action, { ...request, headers })
 }
+async function readPdfUpload(data: string) {
+  let bytes: Uint8Array
+  let pages: number
+  try {
+    bytes = decode(data)
+    if (bytes.length > workspaceDocumentLimit) throw new HttpError(413, 'The PDF exceeds 1 MB.')
+    if (new TextDecoder().decode(bytes.subarray(0, 5)) !== '%PDF-') throw new Error('Invalid PDF')
+    pages = (await PDFDocument.load(bytes, { updateMetadata: false })).getPageCount()
+    if (!pages) throw new Error('Empty PDF')
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    throw new HttpError(422, 'Choose a readable, unencrypted PDF.')
+  }
+  inspectPdf(bytes)
+  return { bytes, pages }
+}
+
+function createPdfContract(env: Env, id: string, account: Account, title: string, name: string,
+  { bytes, pages }: Awaited<ReturnType<typeof readPdfUpload>>,
+) {
+  return actor(env, id, account, 'create-pdf', {
+    method: 'POST', body: bytes.slice().buffer,
+    headers: {
+      'Content-Type': 'application/pdf',
+      'x-clausid-pdf': encodeURIComponent(JSON.stringify({ title, name, pages })),
+    },
+  })
+}
+
+const contractUpload = createContract.extend({ document: workspaceDocument.optional() })
 const json = (body: unknown): RequestInit => ({
   method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
 })
@@ -251,10 +284,21 @@ async function route(request: Request, env: Env) {
   }
   if (pathname === '/api/contracts') {
     if (method === 'POST') {
-      const { title, requestId, workspaceId } = createContract.parse(await readJson(request))
+      const { title, requestId, workspaceId, document } = contractUpload.parse(await readJson(request, workspaceDocumentRequestLimit))
       if (workspaceId && !await isServiceProvider(workspaceId)) throw providerRequired()
+      const source = document && await readPdfUpload(document.data)
+      if (workspaceId) {
+        const entry = await directory.fetch('https://directory/workspace-contract/' + requestId)
+        if (!entry.ok) throw new HttpError(503, 'The contract directory is temporarily unavailable.')
+        const existing = await entry.json<{ workspaceId: string } | null>()
+        if (existing && existing.workspaceId !== workspaceId) throw new HttpError(409, 'That contract belongs to another workspace.')
+      }
       await register(requestId, { workspace: workspaceId })
-      return actor(env, requestId, account, 'create', json({ title }))
+      const created = document && source
+        ? await createPdfContract(env, requestId, account, title, document.name, source)
+        : await actor(env, requestId, account, 'create', json({ title }))
+      if (created.status === 410) await directory.fetch('https://directory/' + requestId, { method: 'DELETE' })
+      return created
     }
     if (method === 'GET') {
       const response = await directory.fetch('https://directory/')
@@ -301,7 +345,12 @@ async function route(request: Request, env: Env) {
     return actor(env, id, { ...account, expires: Math.min(account.expires, Date.now() + 120_000) }, action,
       { headers: { Upgrade: request.headers.get('Upgrade') ?? '' } })
   }
-  if (method === 'GET' && (/^(view|pdf|evidence)$/.test(action) || /^preview\/[\w-]+$/.test(action))) {
+  if (method === 'GET' && action === 'text-blocks') {
+    const query = new URL(request.url).searchParams
+    return actor(env, id, account, 'text-blocks?' + query.toString())
+  }
+  if (method === 'GET' && (/^(view|pdf|evidence|source-pdf|source-download)$/.test(action)
+    || /^preview\/[\w-]+$/.test(action) || /^negotiated-pdf\/[a-f0-9]{64}$/.test(action))) {
     return actor(env, id, account, action)
   }
   if (method === 'POST' && action === 'redeem') {
@@ -321,11 +370,21 @@ async function route(request: Request, env: Env) {
     const { title, requestId } = createContract.parse(await readJson(request))
     const source = await actor(env, id, account, 'copy-source')
     if (!source.ok) return source
-    const { draft } = await source.json<{ draft: string }>()
+    const { draft, pdf } = await source.json<{ draft: string; pdf?: boolean }>()
+    if (pdf) {
+      const original = await actor(env, id, account, 'copy-pdf')
+      if (!original.ok) return original
+      const metadata = JSON.parse(decodeURIComponent(original.headers.get('x-clausid-pdf')!))
+      const body = await original.arrayBuffer()
+      await register(requestId, { copy: id })
+      return actor(env, requestId, account, 'create-pdf', { method: 'POST', body, headers: {
+        'Content-Type': 'application/pdf', 'x-clausid-pdf': encodeURIComponent(JSON.stringify({ ...metadata, title })),
+      } })
+    }
     await register(requestId, { copy: id })
     return actor(env, requestId, account, 'create-copy', json({ title, draft }))
   }
-  if (method === 'POST' && (/^(invite|preview|freeze|sign|void)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
+  if (method === 'POST' && (/^(invite|preview|freeze|sign|void|annotation)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
     return actor(env, id, account, action, json(await readJson(request)))
   }
   throw new HttpError(404, 'Page unavailable.')

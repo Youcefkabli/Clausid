@@ -14,7 +14,7 @@ Sign in to open **Workspaces**. Create a workspace and use **Share workspace** t
 
 ## Develop locally
 
-Use the Node version in `.node-version`, pnpm 10.33.0, and Mailpit. Run `corepack enable` if pnpm is unavailable.
+Use the Node version in `.node-version`, pnpm 10.33.0, and Mailpit. Run `corepack enable` if pnpm is unavailable. The first Worker build also needs Rust 1.93.1, the `wasm32-unknown-unknown` target, and `wasm-bindgen-cli` 0.2.130 on PATH to compile the PDF engine.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -33,6 +33,8 @@ pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
+
+In an existing workspace, choose **Add document** to upload a selectable-text PDF up to 1 MB. Use **Export → Share** to grant a workspace party access, then use **Annotations** to propose text replacements and approve or reject them. After resolving the annotations, prepare the negotiated PDF for signing from Canvas.
 
 The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `CLAUSID_TEST_BROWSER` with a Chrome executable path to use an existing installation.
 

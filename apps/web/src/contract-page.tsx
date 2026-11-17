@@ -1,3 +1,4 @@
+import { PdfAnnotations } from './pdf-annotations.tsx'
 import { AccountSettingsDialog } from './account-settings.tsx'
 import CanvasEditor from './app/canvas-editor/page.tsx'
 import type { CanvasHeader } from './app/canvas-editor/page.tsx'
@@ -11,7 +12,7 @@ import { Link } from '@astryxdesign/core/Link'
 import { Text } from '@astryxdesign/core/Text'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { lazy, Suspense, useEffect, useId, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden'
 import type { FormEvent, ReactNode } from 'react'
 import { Button } from '@astryxdesign/core/Button'
@@ -43,6 +44,7 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [started, setStarted] = useState(false)
   const [error, setError] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
+  const [annotationsOpen, setAnnotationsOpen] = useState(false)
   const [share, setShare] = useState(false)
   const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string; canManage: boolean }>()
   const [prepare, setPrepare] = useState(false)
@@ -57,11 +59,21 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [signingName, setSigningName] = useState('')
   const [consent, setConsent] = useState(false)
   const [copyId] = useState(() => crypto.randomUUID())
+  const latestPdfView = useRef<Pick<ContractView, 'revision' | 'status'> | undefined>(undefined)
+  const publishView = useCallback((view: ContractView) => {
+    if (view.sourcePdf) {
+      const latest = latestPdfView.current
+      if (latest && (view.revision < latest.revision
+        || (view.status === 'Draft' && latest.status !== 'Draft'))) return
+      latestPdfView.current = { revision: view.revision, status: view.status }
+    }
+    project(store, id, view)
+  }, [store, id])
   useEffect(() => {
     let active = true
     const abort = new AbortController()
     let current: ContractView | null = null
-    const receive = (view: ContractView) => { current = view; project(store, id, view) }
+    const receive = (view: ContractView) => { current = view; publishView(view) }
     void api<ContractView>('/' + id, undefined, abort.signal).then((view) => {
       if (active && !current) receive(view)
     }).catch((reason) => { if (active && !current) setError(errorMessage(reason)) })
@@ -78,7 +90,7 @@ export function ContractPage({ id, account, store, renderPage }: {
       active = false; abort.abort(); close()
       room.awareness.destroy(); room.document.destroy(); clearProjection(store, id)
     }
-  }, [id, room, store])
+  }, [id, room, store, publishView])
 
   useEffect(() => {
     if (contract?.role !== 'owner') return
@@ -96,7 +108,7 @@ export function ContractPage({ id, account, store, renderPage }: {
     setBusy(true)
     try {
       const view = await api<ContractView>(path + action, body)
-      project(store, id, view)
+      publishView(view)
       return view
     } catch (error) { setError(errorMessage(error)); return null } finally { setBusy(false) }
   }
@@ -130,16 +142,19 @@ export function ContractPage({ id, account, store, renderPage }: {
   const draft = contract.status === 'Draft'
   const owner = contract.role === 'owner'
   const canManage = owner && sharingAccess?.canManage
-  const canPrepare = canManage && connection.ready && !connection.error && connection.pending === 0
-  const canEdit = draft && !connection.error && !connection.ended
+  const canPrepare = canManage && !contract.annotations?.some(annotation => !annotation.decision) && connection.ready && !connection.error && connection.pending === 0
+  const canEdit = draft && !contract.sourcePdf && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => { setError(''); setNotice(''); set(true) }
   const pageFeedback = <>
-    {!share && !prepare && !voidOpen && !signaturesOpen && alerts}
+    {!share && !prepare && !voidOpen && !signaturesOpen && !annotationsOpen && alerts}
     {connection.error && <div role="alert"><Banner status="error" title={connection.error}
       description={recoverable ? 'Copy your local changes before leaving this page.' : undefined} /></div>}
   </>
   const dialogs = <>
+    {contract.sourcePdf && contract.role !== 'signer' && <PdfAnnotations contract={contract}
+      open={annotationsOpen && !connection.ended} onOpenChange={open => { setAnnotationsOpen(open); setError('') }}
+      save={change => mutate('annotation', change)} busy={busy} error={error} />}
     <Dialog isOpen={share && draft && !connection.ended} onOpenChange={(open) => { setShare(open); if (!open) setError('') }} aria-label="Share contract">
       <div className="flow"><Heading level={2}>Share contract</Heading>
       {sharingAccess?.workspaceId && <div className="flow">
@@ -181,13 +196,16 @@ export function ContractPage({ id, account, store, renderPage }: {
             </Stepper>
           </LayoutHeader>
         </>}
-        content={<LayoutContent>
+        content={<LayoutContent isScrollable={Boolean(contract.sourcePdf && preview)}>
           <VStack gap={4}>
             {preview ? <>
               <Text>Review this PDF and confirm the required signers.</Text>
+              {contract.sourcePdf && <Text>The PDF below is the exact version prepared for signature. Annotations and decisions remain in the negotiation history.</Text>}
               <ul>{preview.signers.map((email) => <li key={email}>{email}</li>)}</ul>
               <Link href={file + 'preview/' + preview.id} target="_blank" rel="noreferrer">Open preview in a new tab</Link>
-              <iframe className="preview-frame" src={file + 'preview/' + preview.id} title="Contract signing preview" />
+              {contract.sourcePdf ? <Suspense fallback={<Text role="status">Loading PDF…</Text>}>
+                <FrozenPdf key={preview.id} url={file + 'preview/' + preview.id} label="Signing preview PDF" pageAnchors={false} />
+              </Suspense> : <iframe className="preview-frame" src={file + 'preview/' + preview.id} title="Contract signing preview" />}
             </> : <form onSubmit={preparePdf} id={signerForm} className="template-form">
               <TextArea label="Signer email addresses" htmlName="signers" placeholder="One email address per line"
                 rows={4} width="100%" isRequired {...{ required: true }} value={signerEmails} onChange={setSignerEmails} />
@@ -252,17 +270,26 @@ export function ContractPage({ id, account, store, renderPage }: {
     {accountOpen && <AccountSettingsDialog isOpen={accountOpen} onOpenChange={setAccountOpen} account={account} />}
   </div>, header)
 
-  if (draft && (!started || (connection.ended && !recoverable))) return renderPage(<VStack gap={3}>
+  if (draft && ((!contract.sourcePdf && !started) || (connection.ended && !recoverable))) return renderPage(<VStack gap={3}>
     <Link href="/">Back to contracts</Link>
     <Heading level={1}>{contract.title}</Heading>
     {pageFeedback}
     {!connection.ended && <Text color="secondary" role="status">Connecting…</Text>}
   </VStack>)
 
-  const pdf = version && !connection.ended && <Suspense fallback={<Text role="status">Loading PDF…</Text>}>
-    <FrozenPdf key={version.id} url={file + 'pdf'} />
+  const negotiated = contract.negotiatedPdf
+  const draftPdfPath = negotiated ? 'negotiated-pdf/' + negotiated.digest : 'source-pdf'
+  const pdf = (version || contract.sourcePdf) && !connection.ended && <Suspense fallback={<Text role="status">Loading PDF…</Text>}>
+    <FrozenPdf key={version?.id ?? negotiated?.digest ?? id} url={file + (version ? 'pdf' : draftPdfPath)}
+      label={version ? undefined : negotiated ? 'Clean negotiated PDF' : 'Contract PDF'} />
   </Suspense>
   const exportActions = !connection.ended && <>
+    {draft && contract.sourcePdf && <>
+      <DropdownMenuItem label="Open PDF in a new tab" href={file + draftPdfPath} target="_blank" />
+      {negotiated && <DropdownMenuItem label="Open original PDF" href={file + 'source-pdf'} target="_blank" />}
+      <DropdownMenuItem label="Share" isDisabled={!canManage} onClick={() => openModal(setShare)} />
+      <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare} onClick={() => openModal(setPrepare)} />
+    </>}
     {version && <>
       <DropdownMenuItem label="Open PDF in a new tab" href={file + 'pdf'} target="_blank" />
       <DropdownMenuItem label={version.canSign ? 'Sign contract' : 'View signatures'}
@@ -279,10 +306,12 @@ export function ContractPage({ id, account, store, renderPage }: {
 
   return <CanvasEditor title={contract.title} document={room.document} awareness={room.awareness}
     name={account.name} editable={canEdit}
-    frozen={!draft && !recoverable ? { pdf, exportActions } : undefined}
+    frozen={contract.sourcePdf || (!draft && !recoverable) ? { pdf, exportActions } : undefined}
     syncStatus={draft && !connection.ended
       ? (!connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved')
       : contract.status}
+    onAnnotations={contract.sourcePdf && contract.role !== 'signer' && !connection.ended
+      ? () => openModal(setAnnotationsOpen) : undefined}
     onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
     onPrepare={draft && canManage && !connection.ended ? () => openModal(setPrepare) : undefined}
     canPrepare={Boolean(canPrepare)}

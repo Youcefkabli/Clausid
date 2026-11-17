@@ -4,7 +4,10 @@ const config :Workerd.Config = (
   services = [
     (name = "clausid", worker = (
       compatibilityDate = "2026-11-15",
-      modules = [(name = "worker.mjs", esModule = embed "../apps/worker/dist/worker.mjs")],
+      modules = [
+        (name = "worker.mjs", esModule = embed "../apps/worker/dist/worker.mjs"),
+        (name = "pdf_engine_bg.wasm", wasm = embed "../packages/pdf-engine/dist/pdf_engine_bg.wasm")
+      ],
       bindings = [
         (name = "AUTH", service = "auth"),
         (name = "PUBLIC_ORIGIN", fromEnvironment = "PUBLIC_ORIGIN"),
