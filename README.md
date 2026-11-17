@@ -34,7 +34,7 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-In an existing workspace, choose **Add document** to upload a selectable-text PDF up to 1 MB. Use **Export → Share** to grant a workspace party access, then use **Annotations** to propose text replacements and approve or reject them. After resolving the annotations, prepare the negotiated PDF for signing from Canvas.
+Attach a selectable-text PDF up to 1 MB in the **Document** step when creating a workspace. It becomes the first contract and opens in Canvas for the owner and invited parties. In an existing workspace, choose **Add document** to upload a PDF. Use **Export → Share** to grant a workspace party access, then use **Annotations** to propose text replacements and approve or reject them. After resolving the annotations, prepare the negotiated PDF for signing from Canvas.
 
 The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `CLAUSID_TEST_BROWSER` with a Chrome executable path to use an existing installation.
 

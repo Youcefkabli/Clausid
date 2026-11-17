@@ -1,11 +1,11 @@
 import { DurableObject } from 'cloudflare:workers'
 import { PDFDocument } from 'pdf-lib'
-import { createContract, createWorkspace, identifier, redeemInvite, workspaceDocument, workspaceDocumentLimit } from '@clausid/contracts'
+import { createContract, createWorkspace, identifier, redeemInvite, setupWorkspace, titleInput, workspaceDocument, workspaceDocumentLimit } from '@clausid/contracts'
 import type { ContractView, Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
-import { workspaceSharing } from './workspace-sharing.ts'
+import { deliverSetupInvitations, workspaceSharing } from './workspace-sharing.ts'
 import { Contract } from './contract.ts'
 import { inspectPdf } from './pdf-rewrite.ts'
-import { decode, HttpError, internal, readJson, safeResponse } from './http.ts'
+import { decode, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import type { Account, Env } from './http.ts'
 
 type WorkspaceRow = Pick<Workspace, 'id' | 'name' | 'description' | 'slug' | 'project' | 'createdAt'>
@@ -26,6 +26,7 @@ export class Directory extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_requests (request_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, ready INTEGER NOT NULL CHECK (ready IN (0, 1)))')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_contracts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)')
   }
+  alarm() { return deliverSetupInvitations(this.ctx, this.env) }
   fetch(request: Request) {
     return safeResponse(async () => {
       const path = new URL(request.url).pathname
@@ -38,7 +39,15 @@ export class Directory extends DurableObject<Env> {
       }
       if (path.startsWith('/workspace-ready/') && request.method === 'POST') {
         const id = identifier.parse(path.slice('/workspace-ready/'.length))
-        sql.exec('UPDATE workspace_requests SET ready = 1 WHERE workspace_id = ?', id)
+        this.ctx.storage.transactionSync(() => {
+          const pending = sql.exec('SELECT 1 FROM workspace_requests WHERE workspace_id = ? AND ready = 0', id).toArray()
+          if (!pending.length) return
+          if (new URL(request.url).searchParams.has('firstContract')) {
+            sql.exec('INSERT OR IGNORE INTO contracts VALUES (?, ?)', id, Date.now())
+            sql.exec('INSERT OR IGNORE INTO workspace_contracts VALUES (?, ?)', id, id)
+          }
+          sql.exec('UPDATE workspace_requests SET ready = 1 WHERE workspace_id = ?', id)
+        })
         return new Response(null, { status: 204 })
       }
       if (path.startsWith('/workspace-delete/') && request.method === 'POST') {
@@ -220,16 +229,28 @@ async function route(request: Request, env: Env) {
       return Response.json(result)
     }
     if (method === 'POST') {
-      const reservation = await directory.fetch('https://directory/workspaces', json(await readJson(request)))
+      const { document, team = [], ...input } = setupWorkspace.parse(await readJson(request, workspaceDocumentRequestLimit))
+      if (team.includes(account.email)) throw new HttpError(422, 'Invite someone other than yourself.')
+      const source = document && await readPdfUpload(document.data)
+      const reservation = await directory.fetch('https://directory/workspaces', json(input))
       if (!reservation.ok) return reservation
       const { workspace, pending } = await reservation.json<{ workspace: Workspace; pending: boolean }>()
       if (pending) {
-        const initialized = await sharing(workspace.id, 'initialize', json(workspace))
+        const initialized = await sharing(workspace.id, 'initialize', json({
+          workspace: document ? { ...workspace, firstContractId: workspace.id, documentName: document.name } : workspace,
+          team, documentDigest: source && await sha256(source.bytes),
+        }))
         if (!initialized.ok) return initialized
-        const ready = await directory.fetch('https://directory/workspace-ready/' + workspace.id, { method: 'POST' })
+        if (document && source) {
+          const title = titleInput.parse(document.name.replace(/\.pdf$/i, '').trim().slice(0, 160) || workspace.name)
+          const contract = await createPdfContract(env, workspace.id, account, title, document.name, source)
+          if (!contract.ok) return contract
+        }
+        const ready = await directory.fetch('https://directory/workspace-ready/' + workspace.id + (document ? '?firstContract' : ''),
+          { method: 'POST' })
         if (!ready.ok) return ready
       }
-      return Response.json(workspace, { status: 201 })
+      return sharing(workspace.id, 'setup-result')
     }
   }
   const workspaceInfo = (id: string) => directory.fetch('https://directory/workspaces/' + id)
@@ -360,7 +381,7 @@ async function route(request: Request, env: Env) {
   if (method === 'POST' && action === 'delete') {
     const entry = await contractWorkspace()
     if (entry && !await isServiceProvider(entry.workspaceId)) throw providerRequired()
-    return actor(env, id, account, 'delete', { method: 'POST' })
+    return actor(env, id, account, 'delete', json({ workspaceId: entry?.workspaceId }))
   }
   if (method === 'POST' && /^(invite|preview|freeze|duplicate|revoke\/[^/]+)$/.test(action)) {
     const entry = await contractWorkspace()

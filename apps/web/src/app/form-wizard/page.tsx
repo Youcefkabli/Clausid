@@ -50,21 +50,16 @@
  * **The step is not in a Card.** The pinned header and footer already fence
  * this region; a card inside them is a second border and, worse, a second
  * inset — its padding would push every field off the line the title and the
- * stepper sit on. Cards go around things inside a step (the cost estimate
- * below), never around the step itself.
+ * stepper sit on.
  */
 
-import {useId, useMemo, useRef, useState, type CSSProperties} from 'react';
-import {Badge} from '@astryxdesign/core/Badge';
+import {useMemo, useRef, useState, type CSSProperties} from 'react';
 import {Banner} from '@astryxdesign/core/Banner';
 import {Button} from '@astryxdesign/core/Button';
-import {Card} from '@astryxdesign/core/Card';
 import {CheckboxInput} from '@astryxdesign/core/CheckboxInput';
-import {CheckboxList, CheckboxListItem} from '@astryxdesign/core/CheckboxList';
 import {Divider} from '@astryxdesign/core/Divider';
-import {Field} from '@astryxdesign/core/Field';
+import {FileInput} from '@astryxdesign/core/FileInput';
 import {FormLayout} from '@astryxdesign/core/FormLayout';
-import {Grid} from '@astryxdesign/core/Grid';
 import {
   Layout,
   LayoutContent,
@@ -72,32 +67,21 @@ import {
   LayoutHeader,
 } from '@astryxdesign/core/Layout';
 import {MetadataList, MetadataListItem} from '@astryxdesign/core/MetadataList';
-import {NumberInput} from '@astryxdesign/core/NumberInput';
 import {RadioList, RadioListItem} from '@astryxdesign/core/RadioList';
-import {SelectableCard} from '@astryxdesign/core/SelectableCard';
 import {Selector} from '@astryxdesign/core/Selector';
 import {HStack, StackItem, VStack} from '@astryxdesign/core/Stack';
 import {Step, Stepper} from '@astryxdesign/core/Stepper';
-import {Switch} from '@astryxdesign/core/Switch';
 import {Heading, Text} from '@astryxdesign/core/Text';
 import {TextArea} from '@astryxdesign/core/TextArea';
 import {TextInput} from '@astryxdesign/core/TextInput';
 import {useMediaQuery} from '@astryxdesign/core/hooks';
-import {titleInput, workspaceProject, workspaceSlug} from '@clausid/contracts';
+import {emailAddress, titleInput, workspaceDocumentLimit, workspaceProject, workspaceSlug} from '@clausid/contracts';
 import type {Workspace} from '@clausid/contracts';
 import {ApiError, errorMessage, workspaceApi} from '../../api.ts';
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
-// `isOptional` is read twice — by the Stepper to mark the step and by the
-// footer to decide whether Skip exists — so it lives on the step rather than
-// as an index check in two places that could disagree.
-const STEPS = [
-  {label: 'Workspace'},
-  {label: 'Team', isOptional: true},
-  {label: 'Plan'},
-  {label: 'Review'},
-];
+const STEPS = ['Workspace', 'Team', 'Document', 'Review'];
 
 const REGIONS = [
   {value: 'us-east', label: 'US East (N. Virginia)'},
@@ -106,62 +90,9 @@ const REGIONS = [
   {value: 'ap-southeast', label: 'Asia Pacific (Singapore)'},
 ];
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: 'Admin',
-  member: 'Member',
-  guest: 'Guest',
-};
-
-const PLANS = [
-  {
-    id: 'starter',
-    label: 'Starter',
-    pricePerSeat: 0,
-    seatLimit: 5,
-    description: 'Up to 5 members, 3 projects, community support.',
-  },
-  {
-    id: 'growth',
-    label: 'Growth',
-    pricePerSeat: 24,
-    seatLimit: 250,
-    description: 'Unlimited projects, integrations, and standard support.',
-  },
-  {
-    id: 'scale',
-    label: 'Scale',
-    pricePerSeat: 48,
-    seatLimit: 2000,
-    description: 'Advanced controls, a 99.9% SLA, and a dedicated CSM.',
-  },
-];
-
-const ADDONS = [
-  {
-    id: 'sso',
-    label: 'SSO / SAML',
-    price: 3,
-    description: 'Single sign-on through Okta, Entra ID, or Google.',
-  },
-  {
-    id: 'audit',
-    label: 'Audit log export',
-    price: 2,
-    description: 'Stream workspace audit events to your SIEM.',
-  },
-  {
-    id: 'support',
-    label: 'Priority support',
-    price: 6,
-    description: 'Four-hour response target, 24/5.',
-  },
-];
-
 // Reserved slugs the backend would reject; checked client-side so the user
 // finds out while typing rather than after pressing Create.
 const TAKEN_SLUGS = ['admin', 'app', 'api', 'northwind', 'support'];
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 // Plain inline styles over Astryx token CSS variables, so the template compiles
@@ -176,8 +107,6 @@ const footerZone: CSSProperties = {flexBasis: 0};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const money = (n: number) => (n === 0 ? '$0' : `$${n.toLocaleString()}`);
-
 /** Split a textarea of addresses on newlines and commas, dropping blanks. */
 function parseEmails(raw: string): string[] {
   return raw
@@ -187,12 +116,8 @@ function parseEmails(raw: string): string[] {
 }
 
 export default function FormWizardPage() {
+  const wizardTitle = 'Create workspace';
   const isNarrow = useMediaQuery('(max-width: 640px)');
-
-  // Field wraps controls that have no label of their own; it needs an id to
-  // point its label at. useId, not a hand-written string, so two of these
-  // templates on one page cannot collide.
-  const planID = useId();
 
   // Focus targets for every field `validate` can complain about, keyed by the
   // same names it uses. Pressing Next on a blocked step sends focus to the
@@ -202,9 +127,10 @@ export default function FormWizardPage() {
   const fieldRefs = {
     name: useRef<HTMLInputElement>(null),
     project: useRef<HTMLInputElement>(null),
+    description: useRef<HTMLTextAreaElement>(null),
     slug: useRef<HTMLInputElement>(null),
     invites: useRef<HTMLTextAreaElement>(null),
-    seats: useRef<HTMLInputElement>(null),
+    document: useRef<HTMLInputElement>(null),
     terms: useRef<HTMLInputElement>(null),
   };
 
@@ -220,86 +146,67 @@ export default function FormWizardPage() {
   // Step 1 — workspace
   const [name, setName] = useState('');
   const [project, setProject] = useState('');
+  const [description, setDescription] = useState('');
   const [slug, setSlug] = useState('');
   const [region, setRegion] = useState('us-east');
   const [visibility, setVisibility] = useState('invite');
 
   // Step 2 — team
   const [invites, setInvites] = useState('');
-  const [role, setRole] = useState('member');
-  const [sendNow, setSendNow] = useState(true);
-  const [inviteNote, setInviteNote] = useState('');
 
-  // Step 3 — plan
-  const [planId, setPlanId] = useState('growth');
-  const [seats, setSeats] = useState(8);
-  const [addons, setAddons] = useState<string[]>(['audit']);
-  const [digest, setDigest] = useState(true);
+  // Step 3 — document
+  const [document, setDocument] = useState<File | null>(null);
+  const [documentError, setDocumentError] = useState('');
 
   // Step 4 — review
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
-  const emails = useMemo(() => parseEmails(invites), [invites]);
+  const emails = useMemo(() => [...new Set(parseEmails(invites).map(email => email.toLowerCase()))], [invites]);
   const invalidEmails = useMemo(
-    () => emails.filter(email => !EMAIL_PATTERN.test(email)),
+    () => emails.filter(email => !emailAddress.safeParse(email).success),
     [emails],
   );
-  const plan = PLANS.find(p => p.id === planId) ?? PLANS[0];
-  const addonCostPerSeat = ADDONS.filter(a => addons.includes(a.id)).reduce(
-    (sum, a) => sum + a.price,
-    0,
-  );
-  const monthlyTotal = (plan.pricePerSeat + addonCostPerSeat) * seats;
-
   // One rule set, read by the Next button, the Stepper tint, and the review
   // step's issue list. Keyed by step index so a step's validity is a lookup.
   const errorsByStep = useMemo<Array<Record<string, string>>>(() => {
-    const workspace: Record<string, string> = {};
+    const details: Record<string, string> = {};
     if (!titleInput.safeParse(name).success) {
-      workspace.name = 'Enter a workspace name of 1–160 characters.';
+      details.name = 'Enter a workspace name of 1–160 characters.';
     }
     if (!workspaceProject.safeParse(project).success) {
-      workspace.project = 'Use up to 160 characters for the project name.';
+      details.project = 'Use up to 160 characters for the project name.';
     }
+    if (description.trim().length > 500) details.description = 'Use up to 500 characters for the description.';
     if (!slug.trim()) {
-      workspace.slug = 'Enter a URL for the workspace.';
+      details.slug = 'Enter a URL for the workspace.';
     } else if (TAKEN_SLUGS.includes(slug.trim()) || slug.trim() === takenSlug) {
-      workspace.slug = 'That workspace URL is already taken.';
+      details.slug = 'That workspace URL is already taken.';
     } else if (!workspaceSlug.safeParse(slug.trim()).success) {
-      workspace.slug = 'Use up to 63 lowercase letters, numbers, and hyphens, starting and ending with a letter or number.';
+      details.slug = 'Use up to 63 lowercase letters, numbers, and hyphens, starting and ending with a letter or number.';
     }
 
     const team: Record<string, string> = {};
-    if (invalidEmails.length > 0) {
-      team.invites = `Not a valid email address: ${invalidEmails.join(', ')}`;
-    }
+    if (!emails.length) team.invites = 'Invite at least one party.';
+    else if (invalidEmails.length) team.invites = `Not a valid email address: ${invalidEmails.join(', ')}`;
+    else if (emails.length > 39) team.invites = 'Invite up to 39 parties.';
 
-    const planStep: Record<string, string> = {};
-    if (seats < 1) {
-      planStep.seats = 'A workspace needs at least one seat.';
-    } else if (seats > plan.seatLimit) {
-      planStep.seats = `${plan.label} tops out at ${plan.seatLimit} seats. Choose a larger plan or reduce the seat count.`;
-    } else if (seats < emails.length + 1) {
-      planStep.seats = `You are inviting ${emails.length} ${
-        emails.length === 1 ? 'person' : 'people'
-      } plus yourself, so you need at least ${emails.length + 1} seats.`;
-    }
+    const documentStep: Record<string, string> = {};
+    if (documentError) documentStep.document = documentError;
 
     const review: Record<string, string> = {};
     if (!acceptedTerms) {
       review.terms = 'Acknowledge the preview to create the workspace.';
     }
 
-    return [workspace, team, planStep, review];
+    return [details, team, documentStep, review];
   }, [
     name,
     project,
+    description,
     slug,
     invalidEmails,
-    seats,
-    plan.seatLimit,
-    plan.label,
     emails.length,
+    documentError,
     acceptedTerms,
     takenSlug,
   ]);
@@ -314,7 +221,7 @@ export default function FormWizardPage() {
   // Steps before the current one that the user has already tried and left
   // broken — surfaced on the review step so nothing hides behind a panel.
   const outstanding = STEPS.map((s, i) => ({
-    ...s,
+    label: s,
     index: i,
     issues: Object.values(shownErrors(i)),
   })).filter(s => s.index !== step && s.issues.length > 0);
@@ -352,10 +259,26 @@ export default function FormWizardPage() {
 
     setBusy(true);
     try {
-      const workspace = await workspaceApi<Workspace>({requestId, name: name.trim(), project: project.trim(), slug: slug.trim()});
-      location.assign(workspace.slug ? '/?workspaceSlug=' + workspace.slug : '/?workspace=' + workspace.id);
+      let attachment;
+      if (document) {
+        try {
+          const {prepareWorkspaceDocument} = await import('../../workspace-document.ts');
+          attachment = await prepareWorkspaceDocument(document);
+        } catch (error) {
+          setDocumentError(errorMessage(error));
+          markAttempted(2);
+          setStep(2);
+          setBusy(false);
+          return;
+        }
+      }
+      const created = await workspaceApi<Workspace>({
+        requestId, name: name.trim(), project: project.trim(), description: description.trim(),
+        slug: slug.trim(), document: attachment, team: emails,
+      });
+      location.assign(created.firstContractId ? '/contracts/' + created.firstContractId : created.slug ? '/?workspaceSlug=' + created.slug : '/?workspace=' + created.id);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof ApiError && error.status === 409 && error.message.includes('workspace URL')) {
         setTakenSlug(slug.trim());
         markAttempted(0);
         setStep(0);
@@ -364,18 +287,6 @@ export default function FormWizardPage() {
       }
       setBusy(false);
     }
-  };
-
-  // Skip is not Next with a different label. Next asserts the step is done and
-  // validates it; Skip declines the step outright, so it clears what the step
-  // collects and moves on without validating. Clearing is the point: a
-  // half-filled optional step that rides along invisibly is the bug this
-  // button exists to prevent, and a malformed address left behind by someone
-  // who chose not to invite anyone would never be shown again.
-  const goSkip = () => {
-    setInvites('');
-    setInviteNote('');
-    setStep(s => Math.min(STEPS.length - 1, s + 1));
   };
 
   const goTo = (index: number) => {
@@ -411,7 +322,7 @@ export default function FormWizardPage() {
           <VStack gap={isNarrow ? 3 : 5}>
             <HStack gap={3} vAlign="center">
               <StackItem size="fill">
-                <Heading level={1}>Create workspace</Heading>
+                <Heading level={1}>{wizardTitle}</Heading>
               </StackItem>
               <Button label="Cancel" variant="ghost" href="/" isDisabled={busy} />
             </HStack>
@@ -425,15 +336,15 @@ export default function FormWizardPage() {
               activeStep={step}
               orientation="horizontal"
               onStepClick={goTo}
-              label="Create workspace progress"
+              label={wizardTitle + ' progress'}
               density="balanced"
               indicatorPosition="on-track">
               {STEPS.map((s, i) => (
                 <Step
-                  key={s.label}
+                  key={s}
                   step={i}
-                  label={s.label}
-                  isOptional={s.isOptional}
+                  label={s}
+                  isOptional={s === 'Document'}
                   status={
                     Object.keys(shownErrors(i)).length > 0 ? 'error' : undefined
                   }
@@ -454,8 +365,7 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Workspace details</Heading>
                 <Text type="supporting" color="secondary">
-                  Name your workspace and choose its URL. Region and access choices preview the template.
-                  This deployment stores data locally. Your workspace starts private until you invite parties.
+                  Name your workspace and choose its URL. Region and access choices are shown for preview.
                 </Text>
               </VStack>
               {/* FormLayout, not a VStack: form fields are the one case where
@@ -480,6 +390,9 @@ export default function FormWizardPage() {
                 />
                 <TextInput label="Project" ref={fieldRefs.project} value={project} onChange={setProject}
                   status={currentErrors.project ? {type: 'error', message: currentErrors.project} : undefined} />
+                <TextArea label="Description" ref={fieldRefs.description} value={description}
+                  onChange={setDescription} rows={3}
+                  status={currentErrors.description ? {type: 'error', message: currentErrors.description} : undefined} />
                 <TextInput
                   label="Workspace URL"
                   ref={fieldRefs.slug}
@@ -487,12 +400,8 @@ export default function FormWizardPage() {
                   value={slug}
                   onChange={setSlug}
                   placeholder="acme"
-                  description={`${location.origin}/?workspaceSlug=${slug.trim() || 'your-workspace'}`}
-                  status={
-                    currentErrors.slug
-                      ? {type: 'error', message: currentErrors.slug}
-                      : undefined
-                  }
+                  description={location.origin + '/?workspaceSlug=' + (slug.trim() || 'your-workspace')}
+                  status={currentErrors.slug ? {type: 'error', message: currentErrors.slug} : undefined}
                 />
                 <Selector
                   label="Data region"
@@ -501,21 +410,7 @@ export default function FormWizardPage() {
                   onChange={setRegion}
                   description="Where projects, files, and audit logs are stored at rest."
                 />
-                {/* A RadioList, not a SegmentedControl. These three options
-                    differ in who they let through, and that only lands if
-                    each one can say so next to itself — a segmented control
-                    has room for a label and nothing else, so the consequence
-                    has to move to a single description that rewrites itself
-                    as you click, showing one option's meaning while offering
-                    three. Radios give every option its own line and let all
-                    three be compared before choosing, which is the decision
-                    being made here. Segmented controls are for switching a
-                    view, where the labels are self-evident and the choice is
-                    reversible on sight. */}
-                <RadioList
-                  label="Who can join"
-                  value={visibility}
-                  onChange={setVisibility}>
+                <RadioList label="Who can join" value={visibility} onChange={setVisibility}>
                   <RadioListItem
                     value="invite"
                     label="Invite only"
@@ -541,19 +436,15 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Invite your team</Heading>
                 <Text type="supporting" color="secondary">
-                  Preview teammate invitations and roles, or skip this step.
-                  You can send workspace invitations after creating the workspace.
+                  Invite at least one party to the workspace.
                 </Text>
               </VStack>
-              {/* Nothing on this step is required, and under
-                  `defaultOptionality="optional"` that is exactly what it
-                  looks like: no indicators at all. Marking each field
-                  "Optional" would say the same thing four times. */}
               <FormLayout defaultOptionality="optional">
                 <TextArea
                   label="Email addresses"
                   ref={fieldRefs.invites}
                   rows={4}
+                  isRequired
                   value={invites}
                   onChange={setInvites}
                   placeholder={'jordan@acme.com\npriya@acme.com'}
@@ -571,46 +462,6 @@ export default function FormWizardPage() {
                         : undefined
                   }
                 />
-                <RadioList
-                  label="Default role for invitees"
-                  value={role}
-                  onChange={setRole}
-                  description="Each person's role can be changed individually after they join.">
-                  <RadioListItem
-                    value="admin"
-                    label="Admin"
-                    description="Manage billing, members, and workspace settings."
-                  />
-                  <RadioListItem
-                    value="member"
-                    label="Member"
-                    description="Create and edit projects. No access to admin settings."
-                  />
-                  <RadioListItem
-                    value="guest"
-                    label="Guest"
-                    description="View and comment on projects they are added to."
-                  />
-                </RadioList>
-                <Divider />
-                <Switch
-                  label="Send invites as soon as the workspace is created"
-                  description="Turn this off to create the workspace now and send invites yourself later."
-                  value={sendNow}
-                  onChange={setSendNow}
-                  labelPosition="start"
-                  labelSpacing="spread"
-                />
-                {sendNow && (
-                  <TextArea
-                    label="Add a note to the invite"
-                    rows={2}
-                    maxLength={280}
-                    value={inviteNote}
-                    onChange={setInviteNote}
-                    placeholder="We're moving planning off email — join us here."
-                  />
-                )}
               </FormLayout>
             </VStack>
           )}
@@ -618,108 +469,21 @@ export default function FormWizardPage() {
           {step === 2 && (
             <VStack gap={5}>
               <VStack gap={1}>
-                <Heading level={2}>Choose a plan</Heading>
+                <Heading level={2}>Document</Heading>
                 <Text type="supporting" color="secondary">
-                  Compare the template's example plans, seats, and add-ons.
-                  These choices are illustrative and do not activate billing.
+                  Upload an editable PDF to create the first contract, or continue with an empty workspace.
                 </Text>
               </VStack>
               <FormLayout defaultOptionality="optional">
-                {/* A plan picker is the case SelectableCard is for: people
-                    decide by comparing the options side by side, not by
-                    reading a list of labels. Wrapped in a Field so the group
-                    gets a visible label on the same line as every other
-                    field's, rather than floating unlabelled above them. */}
-                <Field label="Plan" inputID={planID} isGroupLabel>
-                  <Grid columns={{minWidth: 200}} gap={3}>
-                    {PLANS.map(p => (
-                      <SelectableCard
-                        key={p.id}
-                        label={`${p.label} plan`}
-                        isSelected={planId === p.id}
-                        onChange={() => setPlanId(p.id)}
-                        padding={4}>
-                        <VStack gap={2}>
-                          <HStack gap={2} vAlign="center" hAlign="between">
-                            <Text type="label">{p.label}</Text>
-                            {p.id === 'growth' && (
-                              <Badge variant="success" label="Recommended" />
-                            )}
-                          </HStack>
-                          <Text type="large" weight="bold">
-                            {p.pricePerSeat === 0
-                              ? 'Free'
-                              : `${money(p.pricePerSeat)}/seat`}
-                          </Text>
-                          <Text type="supporting" color="secondary">
-                            {p.description}
-                          </Text>
-                        </VStack>
-                      </SelectableCard>
-                    ))}
-                  </Grid>
-                </Field>
-                <NumberInput
-                  label="Seats"
-                  ref={fieldRefs.seats}
-                  value={seats}
-                  onChange={setSeats}
-                  min={1}
-                  max={plan.seatLimit}
-                  isIntegerOnly
-                  description={`Includes you. ${plan.label} allows up to ${plan.seatLimit}.`}
-                  status={
-                    currentErrors.seats
-                      ? {type: 'error', message: currentErrors.seats}
-                      : undefined
-                  }
-                />
-                <CheckboxList
-                  label="Add-ons"
-                  description="Billed per seat alongside the plan."
-                  value={addons}
-                  onChange={setAddons}>
-                  {ADDONS.map(a => (
-                    <CheckboxListItem
-                      key={a.id}
-                      value={a.id}
-                      label={`${a.label} — ${money(a.price)}/seat`}
-                      description={a.description}
-                    />
-                  ))}
-                </CheckboxList>
-                <Divider />
-                <Switch
-                  label="Weekly usage digest"
-                  description="Email admins a summary of seats and activity every Monday."
-                  value={digest}
-                  onChange={setDigest}
-                  labelPosition="start"
-                  labelSpacing="spread"
-                />
+                <FileInput label="PDF document" ref={fieldRefs.document} mode="dropzone"
+                  accept=".pdf,application/pdf" isOptional maxSize={workspaceDocumentLimit} value={document} isDisabled={busy}
+                  description="PDF with selectable text, up to 1 MB."
+                  onChange={file => {
+                    setDocument(Array.isArray(file) ? file[0] ?? null : file);
+                    setDocumentError('');
+                  }}
+                  status={currentErrors.document ? {type: 'error', message: currentErrors.document} : undefined} />
               </FormLayout>
-              {/* Outside the FormLayout, because it is a readout and not a
-                  field — putting it inside would make the form's last row
-                  something you cannot fill in. A muted Card: the total is the
-                  consequence of every control above it, so it wants to read as
-                  its own object rather than as one more tinted band in the
-                  step. `muted` keeps it quiet enough that it does not compete
-                  with the plan cards for the eye. */}
-              <Card variant="muted" padding={5}>
-                <HStack gap={3} vAlign="center" hAlign="between">
-                  <VStack gap={0.5}>
-                    <Text type="label">Estimated monthly cost</Text>
-                    <Text type="supporting" color="secondary">
-                      {seats} {seats === 1 ? 'seat' : 'seats'} ×{' '}
-                      {money(plan.pricePerSeat + addonCostPerSeat)}
-                      {addonCostPerSeat > 0
-                        ? ` (${money(plan.pricePerSeat)} plan + ${money(addonCostPerSeat)} add-ons)`
-                        : ''}
-                    </Text>
-                  </VStack>
-                  <Text type="display-3">{money(monthlyTotal)}</Text>
-                </HStack>
-              </Card>
             </VStack>
           )}
 
@@ -728,12 +492,11 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Review and create</Heading>
                 <Text type="supporting" color="secondary">
-                  Creating saves the workspace name, project, and URL. Region, access, invitations, and plan choices
-                  are previews. No invitations or charges will be issued.
+                  Creating sends the workspace invitations and opens the uploaded PDF in Canvas.
                 </Text>
               </VStack>
 
-              {submitError && <div role="alert"><Banner status="error" title={submitError} /></div>}
+              {submitError && <Banner status="error" title={submitError} role="alert" />}
               {outstanding.length > 0 && (
                 <Banner
                   status="error"
@@ -778,8 +541,9 @@ export default function FormWizardPage() {
                 </MetadataListItem>
                 <MetadataListItem label="Project">{project.trim() || '—'}</MetadataListItem>
                 <MetadataListItem label="Workspace URL">
-                  {location.origin}/?workspaceSlug={slug.trim() || '—'}
+                  {location.origin + '/?workspaceSlug=' + (slug.trim() || '—')}
                 </MetadataListItem>
+                <MetadataListItem label="Description">{description.trim() || '—'}</MetadataListItem>
                 <MetadataListItem label="Data region">
                   {REGIONS.find(r => r.value === region)?.label ?? region}
                 </MetadataListItem>
@@ -791,42 +555,21 @@ export default function FormWizardPage() {
                       : 'Anyone with the link'}
                 </MetadataListItem>
                 <MetadataListItem label="Invitations">
-                  {emails.length === 0
-                    ? 'None'
-                    : `${emails.length} ${
-                        emails.length === 1 ? 'person' : 'people'
-                      } as ${ROLE_LABELS[role]}${sendNow ? '' : ', sent later'}`}
+                  {emails.join(', ') || '—'}
                 </MetadataListItem>
-                <MetadataListItem label="Plan">
-                  {plan.pricePerSeat === 0
-                    ? `${plan.label} (Free)`
-                    : `${plan.label} · ${money(plan.pricePerSeat)}/seat`}
-                </MetadataListItem>
-                <MetadataListItem label="Add-ons">
-                  {addons.length === 0
-                    ? 'None'
-                    : ADDONS.filter(a => addons.includes(a.id))
-                        .map(a => a.label)
-                        .join(', ')}
-                </MetadataListItem>
-                <MetadataListItem label="Estimated monthly cost">
-                  {money(monthlyTotal)} · {seats}{' '}
-                  {seats === 1 ? 'seat' : 'seats'}
+                <MetadataListItem label="Document">
+                  {document?.name ?? 'None'}
                 </MetadataListItem>
               </MetadataList>
 
               <Divider />
 
               <CheckboxInput
-                label="I understand that the region, team, and plan choices are previews"
+                label="I understand that the region and join policy choices are previews"
                 ref={fieldRefs.terms}
                 value={acceptedTerms}
                 onChange={setAcceptedTerms}
-                status={
-                  currentErrors.terms
-                    ? {type: 'error', message: currentErrors.terms}
-                    : undefined
-                }
+                status={currentErrors.terms ? {type: 'error', message: currentErrors.terms} : undefined}
               />
             </VStack>
           )}
@@ -835,17 +578,7 @@ export default function FormWizardPage() {
       footer={
         <LayoutFooter>
           <HStack gap={3} vAlign="center">
-            {/* Skip belongs at the far end from the button it competes with.
-                Sitting next to Next it reads as a second way forward and
-                collects mis-clicks; alone on the opposite edge it reads as
-                what it is — the exit from a step you were never required to
-                fill in. The zone stays mounted on steps that cannot be
-                skipped so the counter does not jump when it appears. */}
-            <StackItem size="fill" style={footerZone}>
-              {STEPS[step].isOptional && (
-                <Button label="Skip" variant="ghost" onClick={goSkip} />
-              )}
-            </StackItem>
+            <StackItem size="fill" style={footerZone} />
             {/* Just the position, at every moment. A blocked step used to put
                 a summary here, which was a second copy of a message the field
                 was already showing and told you a count rather than which
@@ -863,7 +596,7 @@ export default function FormWizardPage() {
                   onClick={() => setStep(s => Math.max(0, s - 1))}
                 />
                 <Button
-                  label={isLastStep ? 'Create workspace' : 'Next'}
+                  label={isLastStep ? wizardTitle : 'Next'}
                   variant="primary"
                   // Never disabled: pressing it is how a step reveals what is
                   // wrong. A dead button with no explanation is a dead end.

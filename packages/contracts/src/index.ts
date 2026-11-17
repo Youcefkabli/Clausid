@@ -19,6 +19,10 @@ export const createWorkspace = z.object({
   project: workspaceProject.optional(),
   description: z.string().trim().max(500).default(''),
 })
+export const setupWorkspace = createWorkspace.extend({
+  document: workspaceDocument.optional(),
+  team: z.array(emailAddress).max(39).transform(emails => [...new Set(emails)]).optional(),
+})
 export const workspaceStatuses = ['Draft', 'Review', 'Negotiation', 'Signature', 'Active', 'Expiring', 'On hold', 'Closed', 'Completed'] as const
 export const customizeWorkspace = z.object({
   name: titleInput,
@@ -32,6 +36,7 @@ export type Workspace = {
   id: string; name: string; description: string; slug?: string | null; role?: 'owner' | 'member'
   project?: string | null; createdAt?: number; updatedAt?: number; status?: typeof workspaceStatuses[number]
   assignee?: { id: string; email: string }; labels?: string[]
+  firstContractId?: string | null; documentName?: string | null
 }
 
 export type WorkspaceParties = {

@@ -5,8 +5,35 @@ import { hex, HttpError, internal, readJson, sha256 } from './http.ts'
 
 type Party = { id: string; email: string; redeemedDigest?: string }
 type Invitation = { email: string; digest: string; expires: number }
-type Sharing = { deleting?: boolean; workspace: Workspace; owner: Party; parties: Party[]; invites: Invitation[] }
+type SetupMail = { email: string; token: string }
+type Sharing = { setup?: { documentDigest?: string }; setupOutbox?: SetupMail[]; deleting?: boolean; workspace: Workspace; owner: Party; parties: Party[]; invites: Invitation[] }
 const unavailable = () => new HttpError(404, 'Workspace unavailable.')
+
+export async function deliverSetupInvitations(ctx: DurableObjectState, env: Env) {
+  const state = await ctx.storage.get<Sharing>('workspace-sharing')
+  if (!state?.setupOutbox?.length || state.deleting) return
+  await ctx.storage.setAlarm(Date.now() + 60_000)
+  const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(state.owner.id))
+  if (!(await directory.fetch('https://directory/workspaces/' + state.workspace.id)).ok) return
+  for (const mail of state.setupOutbox) {
+    try {
+      const digest = await sha256(new TextEncoder().encode(mail.token))
+      const invite = state.invites.find(candidate => candidate.email === mail.email && candidate.expires > Date.now()
+        && candidate.digest === digest)
+      const sent = !invite || (await internal(env, '/internal/invite', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...mail, contractId: state.workspace.id, role: 'workspace' }),
+      })).ok
+      if (!sent) continue
+      await ctx.storage.transaction(async tx => {
+        const current = (await tx.get<Sharing>('workspace-sharing'))!
+        await tx.put('workspace-sharing', {
+          ...current, setupOutbox: current.setupOutbox?.filter(item => item.token !== mail.token),
+        })
+      })
+    } catch { console.error('Workspace setup invitation delivery failed') }
+  }
+}
 
 export async function workspaceSharing(ctx: DurableObjectState, env: Env, request: Request) {
   const { pathname } = new URL(request.url)
@@ -15,15 +42,38 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
   const party = { id: account.id, email: account.email }
 
   if (pathname === '/sharing/initialize') {
-    const workspace = await readJson(request) as Workspace
+    const body = await readJson(request, 32_768) as Workspace | { workspace: Workspace; team: string[]; documentDigest?: string }
+    const workspace = 'workspace' in body ? body.workspace : body
+    const setup = 'workspace' in body ? { documentDigest: body.documentDigest } : undefined
+    const setupOutbox = 'workspace' in body
+      ? body.team.map(email => ({ email, token: hex(crypto.getRandomValues(new Uint8Array(32))) })) : []
+    const expires = Date.now() + 7 * 86_400_000
+    const invites = await Promise.all(setupOutbox.map(async ({ email, token }) => ({
+      email, expires, digest: await sha256(new TextEncoder().encode(token)),
+    })))
     await ctx.storage.transaction(async (tx) => {
       const existing = await tx.get<Sharing>('workspace-sharing')
       if (existing && (existing.owner.id !== account.id || existing.workspace.id !== workspace.id)) throw unavailable()
-      if (!existing) await tx.put('workspace-sharing', { workspace, owner: party, parties: [], invites: [] } satisfies Sharing)
+      if (setup && existing && (
+        existing.workspace.firstContractId !== workspace.firstContractId ||
+        existing.workspace.documentName !== workspace.documentName ||
+        (existing.setup && existing.setup.documentDigest !== setup.documentDigest)
+      )) throw new HttpError(409, 'Retry with the same setup document.')
+      if (!existing) {
+        await tx.put('workspace-sharing', { workspace, owner: party, parties: [], invites, setup, setupOutbox } satisfies Sharing)
+        if (setupOutbox.length) await tx.setAlarm(Date.now() + 1000)
+      }
     })
     return new Response(null, { status: 204 })
   }
   if (!state) throw unavailable()
+
+  if (pathname === '/sharing/setup-result') {
+    if (state.owner.id !== account.id || state.deleting) throw unavailable()
+    if (state.setupOutbox?.length) await ctx.storage.setAlarm(Date.now() + 1000)
+    return Response.json(state.workspace, { status: 201 })
+  }
+
 
   if (pathname === '/sharing/delete') {
     if (state.owner.id !== account.id) throw unavailable()
@@ -62,19 +112,42 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
         invites: current.invites.filter((invite) => !matches(invite)),
       })
     })
-    const memberWorkspace = { ...state.workspace, role: 'member' as const }
+    const memberWorkspace = { ...state.workspace, documentName: undefined, role: 'member' as const }
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(account.id))
     const result = await directory.fetch('https://directory/workspace-access', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(memberWorkspace),
     })
     if (!result.ok) throw new HttpError(503, 'Workspace directory is temporarily unavailable.')
+    if (memberWorkspace.firstContractId) {
+      const id = memberWorkspace.firstContractId
+      const attached = await env.CONTRACTS.get(env.CONTRACTS.idFromName(id)).fetch('https://contract/join-workspace', {
+        method: 'POST', headers: {
+          'Content-Type': 'application/json', 'x-clausid-contract': id,
+          'x-clausid-account': encodeURIComponent(JSON.stringify(account)),
+        }, body: JSON.stringify({ workspaceId: state.workspace.id }),
+      })
+      if (attached.status === 404) return Response.json({ ...memberWorkspace, firstContractId: null })
+      if (!attached.ok) throw new HttpError(503, 'Contract access could not be prepared. Retry accepting the invitation.')
+    }
     return Response.json(memberWorkspace)
   }
 
   const owner = state.owner.id === account.id
   if (!owner && !state.parties.some(({ id, email }) => id === account.id && email === account.email)) throw unavailable()
+  if (pathname === '/sharing/forget-contract') {
+    if (!owner) throw unavailable()
+    const { contractId } = await readJson(request) as { contractId: string }
+    await ctx.storage.transaction(async tx => {
+      const current = (await tx.get<Sharing>('workspace-sharing'))!
+      if (current.workspace.firstContractId !== contractId) return
+      await tx.put('workspace-sharing', {
+        ...current, workspace: { ...current.workspace, firstContractId: null, documentName: null },
+      })
+    })
+    return new Response(null, { status: 204 })
+  }
   if (pathname === '/sharing/details') {
-    const workspace = state.workspace
+    const workspace = owner ? state.workspace : { ...state.workspace, documentName: undefined }
     if (workspace.createdAt !== undefined) return Response.json({ ...workspace, assignee: workspace.assignee ?? state.owner })
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(state.owner.id))
     const source = await directory.fetch('https://directory/workspaces/' + workspace.id)

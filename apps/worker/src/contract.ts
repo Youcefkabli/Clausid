@@ -19,7 +19,8 @@ type Version = { id: string; digest: string; signers: string[]; frozenAt: string
 type Mail = { id: string; email: string; token: string; role: Invite['role'] }
 type RecordState = {
   id: string; title: string; owner: Member; editors: Member[]; signers: Member[]
-  deletion?: { accounts?: string[] }
+  deletion?: { workspaceId?: string; accounts?: string[] }
+  workspaceJoins?: string[]
   status: Status; revision: number; invites: Invite[]; preview: Preview | null
   sourcePdf?: NonNullable<ContractView['sourcePdf']> & { digest: string }; annotations?: PdfAnnotation[]
   negotiatedPdf?: { digest: string }
@@ -144,6 +145,15 @@ export class Contract extends DurableObject<Env> {
     if (!pending?.accounts?.length) return
     await this.ctx.storage.setAlarm(Date.now() + 60_000)
     try {
+      if (pending.workspaceId === state.id) {
+        const workspace = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName('workspace:' + pending.workspaceId))
+        const response = await workspace.fetch('https://directory/sharing/forget-contract', {
+          method: 'POST', headers: {
+            'Content-Type': 'application/json', 'x-clausid-account': encodeURIComponent(JSON.stringify(state.owner)),
+          }, body: JSON.stringify({ contractId: state.id }),
+        })
+        if (!response.ok && response.status !== 404) throw new Error('Workspace cleanup failed')
+      }
       const responses = await Promise.all(pending.accounts.map(id =>
         this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(id))
           .fetch('https://directory/' + state.id, { method: 'DELETE' })))
@@ -167,12 +177,13 @@ export class Contract extends DurableObject<Env> {
         throw new HttpError(409, 'A contract with a recorded signature cannot be deleted.')
       }
       if (!state.deletion) {
+        const { workspaceId } = await readJson(request) as { workspaceId?: string }
         const accounts = [...new Set([state.owner, ...state.editors, ...state.signers].map(({ id }) => id))]
         await this.ctx.storage.setAlarm(Date.now() + 60_000)
         state = {
           id: state.id, title: '', owner: state.owner, editors: [], signers: [], status: state.status,
           revision: state.revision, invites: [], preview: null, version: null, signatures: [], outbox: [],
-          deletion: { accounts },
+          deletion: { workspaceId, accounts },
         }
         this.#save(state, () => {
           this.ctx.storage.sql.exec('DELETE FROM files')
@@ -227,6 +238,20 @@ export class Contract extends DurableObject<Env> {
       return Response.json(this.#view(state, account), { status: 201 })
     }
     if (!state) throw absent()
+    if (action === 'join-workspace') {
+      const { workspaceId } = await readJson(request) as { workspaceId: string }
+      if (!state.sourcePdf || workspaceId !== state.id) throw absent()
+      if (state.workspaceJoins?.includes(account.id)) return new Response(null, { status: 204 })
+      const directory = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(account.id))
+      const register = await directory.fetch('https://directory/' + state.id + '?attach=1&workspace=' + workspaceId, { method: 'PUT' })
+      if (!register.ok) throw new HttpError(503, 'Workspace contract access is temporarily unavailable.')
+      const role = this.#role(state, account)
+      const editors = !role || role === 'signer' ? [...state.editors, { id: account.id, email: account.email }] : state.editors
+      this.#save({ ...state, editors, workspaceJoins: [...(state.workspaceJoins ?? []), account.id] })
+      this.#publish(this.#state!)
+      return new Response(null, { status: 204 })
+    }
+
     if (action === 'redeem') {
       const { token } = redeemInvite.parse(await readJson(request))
       const digest = await sha256(new TextEncoder().encode(token))

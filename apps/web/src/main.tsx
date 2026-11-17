@@ -74,10 +74,13 @@ function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
   async function accept() {
     setError('')
     try {
-      if (isWorkspaceInvite) await workspaceAction(id, 'redeem', { token })
-      else await api('/' + id + '/redeem', { token })
+      let destination = '/contracts/' + id
+      if (isWorkspaceInvite) {
+        const workspace = await workspaceAction<Workspace>(id, 'redeem', { token })
+        destination = workspace.firstContractId ? '/contracts/' + workspace.firstContractId : '/?workspace=' + id
+      } else await api('/' + id + '/redeem', { token })
       sessionStorage.removeItem(inviteKey)
-      location.assign(isWorkspaceInvite ? '/?workspace=' + id : '/contracts/' + id)
+      location.assign(destination)
     } catch (reason) { setError(errorMessage(reason)) }
   }
   return <section className="auth-panel"><Card padding={5}><div className="flow">
@@ -190,6 +193,8 @@ function Dashboard({ store }: { store: AppStore }) {
         </VStack>
         <HStack gap={2} wrap="wrap" vAlign="center">
           <Button label="Workspaces" href="/" />
+          {selectedWorkspace?.role === 'owner' && selectedWorkspace.firstContractId && selectedWorkspace.documentName &&
+            <Button label={'Download ' + selectedWorkspace.documentName} href={'/api/contracts/' + selectedWorkspace.firstContractId + '/source-download'} />}
           {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
           {selectedWorkspace?.role === 'owner' && <Button label="Add document" variant="primary"
             onClick={() => changeCreateOpen(true)} />}
