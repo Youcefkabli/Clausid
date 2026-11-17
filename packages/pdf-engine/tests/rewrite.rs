@@ -317,3 +317,62 @@ fn uses_unicode_offsets_and_preserves_split_proportional_text() {
         ))
     ));
 }
+
+#[test]
+fn edits_a_pdf_lib_export_with_embedded_true_type_subsets() {
+    let source = include_bytes!("fixtures/pdf-lib-subset.pdf");
+    let document = Document::open(source).unwrap();
+    let mut expected = document.inspect().unwrap();
+    let deadline = expected
+        .iter_mut()
+        .find(|block| block.text == "15")
+        .unwrap();
+    let edit = Edit {
+        page: deadline.page,
+        block: deadline.block,
+        offset: 0,
+        expected: "15",
+        replacement: "10",
+    };
+    deadline.text = "10".into();
+    document.plan(&edit).unwrap();
+    let revised = document.apply(&[edit]).unwrap();
+    assert_eq!(
+        Document::open(&revised).unwrap().inspect().unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn preserves_ligatures_and_uses_scalar_offsets_after_them() {
+    let source = include_bytes!("fixtures/pdf-lib-subset.pdf");
+    let document = Document::open(source).unwrap();
+    let mut expected = document.inspect().unwrap();
+    let block = expected
+        .iter_mut()
+        .find(|block| block.text == "fixed")
+        .unwrap();
+    let edit = Edit {
+        page: block.page,
+        block: block.block,
+        offset: 2,
+        expected: "x",
+        replacement: "s",
+    };
+    assert!(matches!(
+        document.plan(&Edit {
+            offset: 1,
+            expected: "i",
+            ..edit
+        }),
+        Err(Error::Unsupported(
+            "text range must align with glyph boundaries"
+        ))
+    ));
+    block.text = "fised".into();
+    let revised = document.apply(&[edit]).unwrap();
+    assert_eq!(
+        Document::open(&revised).unwrap().inspect().unwrap(),
+        expected
+    );
+}

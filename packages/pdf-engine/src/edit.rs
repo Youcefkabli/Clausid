@@ -66,7 +66,11 @@ impl Run {
         TextBlock {
             page,
             block,
-            text: self.glyphs.iter().map(|glyph| glyph.character).collect(),
+            text: self
+                .glyphs
+                .iter()
+                .flat_map(|glyph| glyph.text.iter())
+                .collect(),
             baseline: self.baseline,
             font_size: self.font_size,
         }
@@ -81,20 +85,37 @@ impl Run {
             .offset
             .checked_add(len)
             .ok_or(Error::Malformed("invalid text range"))?;
-        let range = edit.offset..end;
-        let source = self
-            .glyphs
-            .get(range.clone())
-            .ok_or(Error::Malformed("invalid text range"))?;
+        let mut scalar_offset = 0;
+        let mut start_glyph = None;
+        let mut end_glyph = None;
+        for (index, glyph) in self.glyphs.iter().enumerate() {
+            if scalar_offset == edit.offset {
+                start_glyph = Some(index);
+            }
+            scalar_offset += glyph.text.len();
+            if scalar_offset == end {
+                end_glyph = Some(index + 1);
+                break;
+            }
+        }
+        let range = match (start_glyph, end_glyph) {
+            (Some(start), Some(end)) => start..end,
+            _ => {
+                return Err(Error::Unsupported(
+                    "text range must align with glyph boundaries",
+                ));
+            }
+        };
+        let source = &self.glyphs[range.clone()];
         if !source
             .iter()
-            .map(|glyph| glyph.character)
+            .flat_map(|glyph| glyph.text.iter().copied())
             .eq(edit.expected.chars())
         {
             return Err(Error::Malformed("target text does not match"));
         }
         let replacement = self.font.encode(edit.replacement)?;
-        if replacement.is_empty() && len == self.glyphs.len() {
+        if replacement.is_empty() && range.len() == self.glyphs.len() {
             return Err(Error::Unsupported("cannot remove the entire text block"));
         }
         // Use the smallest right edge permitted by the old run. Positive TJ
@@ -427,12 +448,29 @@ impl Document<'_> {
                 return Err(Error::Malformed("unexpected operands before BT"));
             }
             parser.skip();
+            // pdf-lib writes the fill color inside BT, before selecting the font.
+            if parser
+                .bytes
+                .get(parser.pos)
+                .is_some_and(|&byte| byte != b'/')
+            {
+                for _ in 0..3 {
+                    operand_number(&mut parser)?;
+                }
+                parser.expect(b"rg")?;
+            }
+            parser.skip();
             let font_name = parser.name()?;
-            let font = match font_cache.get(&font_name) {
+            let font_value = key(fonts, &font_name)?;
+            let cache_key = match font_value {
+                Value::Reference(id) => Ok(*id),
+                _ => Err(font_name),
+            };
+            let font = match font_cache.get(&cache_key) {
                 Some(font) => Rc::clone(font),
                 None => {
-                    let font = self.editable_font(key(fonts, &font_name)?)?;
-                    font_cache.insert(font_name, Rc::clone(&font));
+                    let font = self.editable_font(font_value)?;
+                    font_cache.insert(cache_key, Rc::clone(&font));
                     font
                 }
             };
@@ -441,7 +479,13 @@ impl Document<'_> {
                 return Err(Error::Unsupported("font size"));
             }
             parser.expect(b"Tf")?;
-            let first = operand_number(&mut parser)?;
+            let mut first = operand_number(&mut parser)?;
+            let after_first = parser.pos;
+            if parser.expect(b"TL").is_ok() {
+                first = operand_number(&mut parser)?;
+            } else {
+                parser.pos = after_first;
+            }
             let second = operand_number(&mut parser)?;
             let after_pair = parser.pos;
             let (mut baseline, direction) = if parser.expect(b"Td").is_ok() {
@@ -469,6 +513,12 @@ impl Document<'_> {
                     parser.skip();
                     let cursor = parser.pos;
                     if parser.expect(b"ET").is_ok() {
+                        break (cursor, None);
+                    }
+                    parser.pos = cursor;
+                    // A trailing line advance has no effect on any displayed glyph.
+                    if parser.expect(b"T*").is_ok() {
+                        parser.expect(b"ET")?;
                         break (cursor, None);
                     }
                     parser.pos = cursor;
@@ -627,10 +677,10 @@ impl Document<'_> {
                         let mut end = 0;
                         let mut resolved = Vec::with_capacity(edits.len());
                         for edit in edits {
-                            if edit.offset < end {
+                            let planned = run.plan(edit)?;
+                            if planned.0.start < end {
                                 return Err(Error::Unsupported("overlapping text replacements"));
                             }
-                            let planned = run.plan(edit)?;
                             end = planned.0.end;
                             resolved.push(planned);
                         }
