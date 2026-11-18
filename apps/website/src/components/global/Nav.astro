@@ -1,0 +1,169 @@
+---
+import { REPOSITORY, SELF_HOST } from "@/consts.ts";
+import Wordmark from "@/components/site/Wordmark.astro";
+import Button from "@/components/Button.astro";
+---
+
+<nav class="masthead_wrap" aria-label="Main navigation">
+  <Wordmark />
+  <div class="masthead_links">
+    <a href="#walkthrough">Walkthrough</a>
+    <a href={REPOSITORY + "#develop-locally"}>Docs</a>
+    <a href="#evidence">Evidence</a>
+  </div>
+  <div class="masthead_actions">
+    <a href={REPOSITORY}>GitHub</a>
+    <Button element="link" href={SELF_HOST}>
+      Self-host Clausid
+    </Button>
+  </div>
+  <button
+    class="masthead_toggle"
+    aria-label="Open navigation"
+    popovertarget="mobile-menu"
+  >
+    <i></i>
+    <i></i>
+  </button>
+  <div id="mobile-menu" popover class="masthead_menu">
+    <a href="#walkthrough">Walkthrough</a>
+    <a href={REPOSITORY + "#develop-locally"}>Docs</a>
+    <a href="#evidence">Evidence</a>
+    <a href={SELF_HOST}>Self-host Clausid</a>
+    <a href={REPOSITORY}>GitHub</a>
+  </div>
+</nav>
+<script>
+  const masthead = document.querySelector<HTMLElement>(".masthead_wrap");
+  if (masthead) {
+    let previous = window.scrollY;
+    window.addEventListener(
+      "scroll",
+      () => {
+        const current = Math.max(0, window.scrollY);
+        if (current < 100 || current > previous) {
+          if (!masthead.matches(":focus-within"))
+            masthead.removeAttribute("data-floating");
+        } else if (current < previous && current > 160) {
+          masthead.setAttribute("data-floating", "");
+        }
+        if (current < 100) masthead.removeAttribute("data-floating");
+        previous = current;
+      },
+      { passive: true },
+    );
+  }
+  const menu = document.querySelector<HTMLElement>("#mobile-menu");
+  menu?.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("a"))
+      menu.hidePopover();
+  });
+</script>
+<style is:global>
+  @layer components {
+    :root {
+      --masthead-height: 3.25rem;
+      --hero-inset: clamp(0.5rem, 1.05vw, 0.9375rem);
+      --hero-radius: clamp(1.1rem, 2vw, 1.675rem);
+    }
+    .masthead_menu {
+      position: fixed;
+      inset: calc(var(--hero-inset) + var(--masthead-height)) var(--site-margin) auto auto;
+      min-width: 10rem;
+      margin: 0;
+      padding: 0.4rem;
+      background: #19191b;
+      color: white;
+      border: 1px solid #414144;
+      border-radius: 0.65rem;
+      z-index: 10;
+      box-shadow: 0 0.5rem 1.25rem #0006;
+    }
+    .masthead_menu a {
+      padding: 0.7rem;
+      display: block;
+      font-size: 0.85rem;
+      text-decoration: none;
+    }
+    .masthead_menu a:hover,
+    .masthead_menu a:focus-visible {
+      background: #343039;
+    }
+    .masthead_wrap {
+      position: absolute;
+      z-index: 4;
+      inset: var(--hero-inset) var(--hero-inset) auto;
+      height: var(--masthead-height);
+      padding-inline: var(--site-margin);
+      display: grid;
+      align-items: center;
+      grid-template-columns: 1fr auto 1fr;
+      font: 500 0.75rem/1.4 var(--primary-family);
+    }
+    .masthead_wrap > .wordmark_wrap {
+      justify-self: start;
+    }
+    .masthead_links,
+    .masthead_actions {
+      display: flex;
+      align-items: center;
+      gap: 1.35rem;
+      color: #c1b9c5;
+    }
+    .masthead_actions {
+      justify-self: end;
+      gap: 1rem;
+    }
+    .masthead_wrap a {
+      text-decoration: none;
+    }
+    .masthead_wrap a:hover {
+      color: white;
+    }
+    .masthead_actions .button_wrap {
+      --button-background: var(--brand-500);
+      --button-text: white;
+      padding: 0.55rem 0.85rem;
+    }
+    .masthead_toggle {
+      display: none;
+      padding: 0.35rem;
+      background: transparent;
+      color: white;
+      cursor: pointer;
+      border: 0;
+    }
+    .masthead_wrap[data-floating] {
+      position: fixed;
+      inset: var(--hero-inset) auto auto 50%;
+      transform: translateX(-50%);
+      width: min(calc(100% - 2 * var(--hero-inset)), 41rem);
+      height: 2.8rem;
+      padding-inline: 1rem;
+      border-radius: 1rem;
+      background: rgb(9 9 10 / 88%);
+      backdrop-filter: blur(1rem);
+      box-shadow: 0 0.3rem 1.5rem #0004;
+    }
+    .masthead_toggle i {
+      display: block;
+      width: 1.25rem;
+      height: 1px;
+      margin: 0.35rem 0;
+      background: white;
+    }
+    @media (width < 64rem) {
+      .masthead_wrap {
+        display: flex;
+        justify-content: space-between;
+      }
+      .masthead_links,
+      .masthead_actions {
+        display: none;
+      }
+      .masthead_toggle {
+        display: block;
+      }
+    }
+  }
+</style>

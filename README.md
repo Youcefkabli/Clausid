@@ -40,6 +40,14 @@ pnpm test:e2e
 
 The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `CLAUSID_TEST_BROWSER` with a Chrome executable path to use an existing installation.
 
+## Website
+
+The standalone Astro and Lumos homepage lives in `apps/website`. From the repository root, run `pnpm install --frozen-lockfile` and `pnpm --filter @clausid/website dev`. Open the URL printed by Astro. The website runs independently of the contract app and Mailpit.
+
+In Stacki, choose **Open from folder** (called **Open Existing Project** in some versions) and select `apps/website`. Double-click the hero headline on the canvas to edit it. Stacki saves changes to `src/pages/index.astro` inside the website folder.
+
+Use `pnpm --filter @clausid/website build` followed by `pnpm --filter @clausid/website preview` to preview the static production build.
+
 ## How it works
 
 - **Web** uses React, Vite+, and Astryx’s Neutral theme and templates. Tiptap and Yjs handle editing and awareness. LiveStore materializes authorized workflow data in memory, and the dashboard refreshes from the server every five seconds.

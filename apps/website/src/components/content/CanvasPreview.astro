@@ -1,0 +1,36 @@
+---
+import Img from "@/components/media/Img.astro";
+interface Props {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  compactSrc?: string;
+}
+const { src, alt, width, height, compactSrc } = Astro.props;
+---
+
+<a class="product-preview_wrap" href={src} title="View full-size screenshot">
+  <picture>
+    {compactSrc && <source media="(width < 64rem)" srcset={compactSrc} />}
+    <Img src={src} alt={alt} width={width} height={height} />
+  </picture>
+</a>
+<style>
+  .product-preview_wrap {
+    display: block;
+    width: 100%;
+    cursor: zoom-in;
+    border-radius: 0.75rem;
+  }
+  picture {
+    display: block;
+  }
+  .product-preview_wrap :global(img) {
+    display: block;
+    border-radius: 0.5rem;
+    width: 100%;
+    height: auto;
+    box-shadow: 0 0.75rem 2rem #0003;
+  }
+</style>

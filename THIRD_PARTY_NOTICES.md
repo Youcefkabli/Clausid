@@ -23,3 +23,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The website adapts Lumos for Astro 1.0.4. Its upstream MIT notice is retained in [LICENSE-Lumos](apps/website/LICENSE-Lumos). The locally served Inter font includes its [license](apps/website/src/assets/fonts/Inter-LICENSE.txt). The animated gradient adapts [Stacki’s welcome shader](https://github.com/flowtricks/stacki/blob/main/src/features/welcome/welcomeShader.ts) under the [MIT license](apps/website/LICENSE-Stacki).
+The shader’s simplex noise implementation retains the [Ashima Arts and Stefan Gustavson license](apps/website/LICENSE-webgl-noise).

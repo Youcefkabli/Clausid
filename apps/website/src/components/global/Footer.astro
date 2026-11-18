@@ -1,0 +1,92 @@
+---
+import Wordmark from "@/components/site/Wordmark.astro";
+import { REPOSITORY, SELF_HOST } from "@/consts.ts";
+---
+
+<footer class="footer_wrap">
+  <div class="footer_main">
+    <div>
+      <Wordmark />
+      <p>
+        A self-hosted workspace for drafting, reviewing, and signing contracts.
+      </p>
+    </div>
+    <nav aria-label="Product">
+      <strong>Product</strong>
+      <a href="#walkthrough">Walkthrough</a>
+      <a href="#evidence">Signing evidence</a>
+    </nav>
+    <nav aria-label="Documentation">
+      <strong>Documentation</strong>
+      <a href={REPOSITORY + "#develop-locally"}>Quick start</a>
+      <a href={SELF_HOST}>Deploy on a VPS</a>
+      <a href={REPOSITORY + "#backup-and-restore"}>Backup and restore</a>
+    </nav>
+    <nav aria-label="Open source">
+      <strong>Open source</strong>
+      <a href={REPOSITORY}>GitHub</a>
+      <a href={REPOSITORY + "/issues"}>Issues</a>
+      <a href={REPOSITORY + "/blob/main/LICENSE"}>License</a>
+    </nav>
+  </div>
+  <div class="footer_strip">
+    <span>Self-hosted</span>
+    <span>AGPL-3.0 licensed</span>
+    <span>Clausid</span>
+  </div>
+</footer>
+<style>
+  .footer_wrap {
+    border-top: 1px solid #ffffff12;
+    color: #a5a3ab;
+  }
+  .footer_main {
+    width: var(--site-width);
+    max-width: var(--max-width-main);
+    margin: auto;
+    padding-block: clamp(3rem, 6vw, 5rem);
+    display: grid;
+    grid-template-columns: 1.9fr repeat(3, 1fr);
+    gap: var(--site-gutter);
+    font-size: 0.9rem;
+  }
+  p {
+    max-width: 25ch;
+    line-height: 1.6;
+    margin-top: 1.5rem;
+  }
+  nav {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: 1rem;
+  }
+  nav strong {
+    color: white;
+    font-weight: 500;
+  }
+  nav a {
+    text-decoration: none;
+  }
+  nav a:hover {
+    color: white;
+    text-decoration: underline;
+  }
+  .footer_strip {
+    display: flex;
+    gap: 1.25rem;
+    padding: 0.65rem var(--site-margin);
+    background: #09090a;
+    border-top: 1px solid #ffffff0b;
+    font-size: 0.7rem;
+  }
+  .footer_strip span:last-child {
+    margin-left: auto;
+  }
+  @media (width < 48rem) {
+    .footer_main {
+      grid-template-columns: 1fr 1fr;
+      row-gap: 2.5rem;
+    }
+  }
+</style>

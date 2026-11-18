@@ -1,0 +1,125 @@
+---
+interface Props {
+  offset?: number;
+}
+const { offset = 0 } = Astro.props;
+---
+
+<clausid-gradient
+  class="gradient-surface"
+  data-offset={offset}
+  aria-hidden="true"
+>
+  <canvas></canvas>
+</clausid-gradient>
+<script>
+  import { shaderResources, SHADER_LIMITS } from "./welcomeShader";
+  class GradientSurface extends HTMLElement {
+    private dispose?: () => void;
+    connectedCallback() {
+      if (this.dispose) return;
+      const canvas = this.querySelector("canvas");
+      const gl = canvas?.getContext("webgl", {
+        alpha: false,
+        antialias: false,
+        depth: false,
+        powerPreference: "low-power",
+        failIfMajorPerformanceCaveat: true,
+      });
+      if (!canvas || !gl) return;
+      const resources = shaderResources(gl);
+      if (!resources) return;
+      const motion = matchMedia("(prefers-reduced-motion: reduce)");
+      const offset = Number(this.dataset.offset ?? 0);
+      let frame = 0;
+      let visible = false;
+      let lastDraw = -Infinity;
+      const draw = (now: number) => {
+        frame = 0;
+        if (!visible || document.hidden || gl.isContextLost()) return;
+        if (now - lastDraw >= 32 || motion.matches) {
+          const scale = Math.min(1, 1000 / Math.max(1, canvas.clientWidth));
+          const width = Math.max(1, Math.round(canvas.clientWidth * scale));
+          const height = Math.max(1, Math.round(canvas.clientHeight * scale));
+          if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+          }
+          const seconds = motion.matches
+            ? SHADER_LIMITS.secondsStill
+            : SHADER_LIMITS.secondsStill +
+              now * 0.001 * SHADER_LIMITS.timeScale;
+          gl.viewport(0, 0, width, height);
+          gl.uniform2f(resources.resolutionLocation, width, height);
+          gl.uniform1f(
+            resources.timeLocation,
+            (seconds + offset) % SHADER_LIMITS.secondsPeriod,
+          );
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          canvas.style.opacity = "1";
+          lastDraw = now;
+        }
+        if (!motion.matches) frame = requestAnimationFrame(draw);
+      };
+      const refresh = () => {
+        cancelAnimationFrame(frame);
+        lastDraw = -Infinity;
+        if (visible && !document.hidden) frame = requestAnimationFrame(draw);
+      };
+      const intersection = new IntersectionObserver(([entry]) => {
+        visible = entry.isIntersecting;
+        refresh();
+      });
+      const resize = new ResizeObserver(refresh);
+      intersection.observe(this);
+      resize.observe(this);
+      motion.addEventListener("change", refresh);
+      document.addEventListener("visibilitychange", refresh);
+      const lost = () => {
+        cancelAnimationFrame(frame);
+        canvas.style.opacity = "0";
+      };
+      canvas.addEventListener("webglcontextlost", lost);
+      this.dispose = () => {
+        cancelAnimationFrame(frame);
+        intersection.disconnect();
+        resize.disconnect();
+        motion.removeEventListener("change", refresh);
+        document.removeEventListener("visibilitychange", refresh);
+        canvas.removeEventListener("webglcontextlost", lost);
+        gl.deleteBuffer(resources.buffer);
+        gl.deleteProgram(resources.program);
+      };
+    }
+    disconnectedCallback() {
+      this.dispose?.();
+      this.dispose = undefined;
+    }
+  }
+  if (!customElements.get("clausid-gradient"))
+    customElements.define("clausid-gradient", GradientSurface);
+</script>
+<style is:global>
+  .gradient-surface {
+    position: absolute;
+    inset: 0;
+    display: block;
+    overflow: hidden;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(
+      150deg,
+      #0b000d 0%,
+      #0b000d 19%,
+      #2b0554 41%,
+      #6100ff 54%,
+      #b399ff 68%,
+      #fcf0fc 84%
+    );
+  }
+  .gradient-surface canvas {
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+</style>

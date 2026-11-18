@@ -1,0 +1,158 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import Section from "@/components/wrapper/Section.astro";
+import ContentWrapper from "@/components/wrapper/ContentWrapper.astro";
+import Grid from "@/components/wrapper/Grid.astro";
+import ButtonWrapper from "@/components/wrapper/ButtonWrapper.astro";
+import Heading from "@/components/typography/Heading.astro";
+import Paragraph from "@/components/typography/Paragraph.astro";
+import Button from "@/components/Button.astro";
+import Card from "@/components/item/Card.astro";
+import CanvasPreview from "@/components/content/CanvasPreview.astro";
+import GradientSurface from "@/components/site/GradientSurface.astro";
+import HeroVideo from "@/components/site/HeroVideo.astro";
+import { REPOSITORY, SELF_HOST } from "@/consts.ts";
+---
+
+<BaseLayout>
+  <Section id="home" align="center" gap="0">
+    <HeroVideo slot="background" />
+    <ContentWrapper centered>
+      <a class="tour-link" href="#walkthrough">
+        <span aria-hidden="true">▶</span> See how it works
+      </a>
+      <h1>Draft, review, and sign contracts together.</h1>
+      <Paragraph variant="large" maxWidth={39}>
+        Work through each clause together. Sign the exact PDF you reviewed in a
+        workspace you host.
+      </Paragraph>
+      <Button element="link" href={SELF_HOST}>
+        Self-host Clausid
+      </Button>
+      <ul class="capabilities">
+        <li>Free and open source</li>
+        <li>Live collaboration</li>
+        <li>Electronic signatures</li>
+      </ul>
+    </ContentWrapper>
+  </Section>
+  <Section id="walkthrough" align="center" paddingTop="large">
+    <Heading maxWidth={16}>From first draft to signed PDF.</Heading>
+    <Grid small={2} large={3}>
+      <Card
+        variant="bento"
+        data-wide
+        eyebrow="Canvas"
+        heading="Work on one agreement"
+        text="Harbor Studio and Alder Design Co. open their Studio Services Agreement in a shared workspace."
+      >
+        <CanvasPreview
+          slot="visual"
+          src="/product/canvas.webp"
+          width={2480}
+          height={1520}
+          alt="Studio Services Agreement in Clausid Canvas, with a proposed change to the delivery deadline."
+        />
+      </Card>
+      <Card
+        variant="bento"
+        eyebrow="Suggestions"
+        heading="Propose a change"
+        text="A collaborator suggests bringing the first delivery forward from 15 business days to 10."
+      >
+        <CanvasPreview
+          slot="visual"
+          src="/product/proposal.webp"
+          width={632}
+          height={530}
+          alt="The original deadline and proposed replacement in the negotiation history."
+        />
+      </Card>
+      <Card
+        variant="bento"
+        eyebrow="Review"
+        heading="Agree on the wording"
+        text="The service provider reviews the proposal and approves the new deadline. Both parties can see what changed."
+      >
+        <div slot="visual" class="clause-change">
+          <small>Delivery and review</small>
+          <p>
+            The first draft is due in <del>15 business days</del>{" "}
+            <ins>10 business days</ins>.
+          </p>
+        </div>
+      </Card>
+      <Card
+        variant="bento"
+        data-wide
+        eyebrow="PDF preview"
+        heading="Freeze the reviewed PDF"
+        text="The provider checks the amended agreement, confirms the signer, and freezes that exact version for signing."
+      >
+        <CanvasPreview
+          slot="visual"
+          src="/product/review.webp"
+          compactSrc="/product/review-compact.webp"
+          width={1240}
+          height={1140}
+          alt="The provider’s PDF preview with the Freeze and send action."
+        />
+      </Card>
+      <Card
+        variant="bento"
+        data-wide
+        data-light
+        eyebrow="Signatures"
+        heading="Sign the agreement"
+        text="The designated signer reviews the frozen PDF, enters their name, and confirms their consent to sign."
+      >
+        <CanvasPreview
+          slot="visual"
+          src="/product/sign.webp"
+          width={800}
+          height={624}
+          alt="The signer's typed name and the consent checkbox."
+        />
+      </Card>
+      <Card
+        variant="bento"
+        id="evidence"
+        eyebrow="Evidence"
+        heading="Keep the signed record"
+        text="Download the frozen PDF, its SHA-256 digest, and the record of who signed and when."
+      >
+        <CanvasPreview
+          slot="visual"
+          src="/product/evidence.webp"
+          width={430}
+          height={270}
+          alt="The signed agreement’s Export menu with Download signing evidence."
+        />
+      </Card>
+    </Grid>
+  </Section>
+  <Section id="self-host" align="center" paddingTop="none" gap="0">
+    <div class="closing-panel">
+      <GradientSurface offset={0.33} />
+      <ContentWrapper centered>
+        <img
+          class="closing-mark"
+          src="/brand/clausid-icon.svg"
+          alt=""
+          width="56"
+          height="56"
+        />
+        <Heading maxWidth={20}>Host your own contract workspace.</Heading>
+        <ButtonWrapper>
+          <Button element="link" href={SELF_HOST}>
+            Self-host Clausid
+          </Button>
+          <Button element="link" emphasis="secondary" href={REPOSITORY}>
+            View on GitHub
+          </Button>
+        </ButtonWrapper>
+        <Paragraph>Docker Compose · AGPL-3.0 licensed</Paragraph>
+      </ContentWrapper>
+    </div>
+  </Section>
+</BaseLayout>

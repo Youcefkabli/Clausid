@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Clausid cube</title>
+<rect width="64" height="64" rx="15" fill="#fff"/>
+<path d="M32 11.5 50 21.75v20.5L32 52.5 14 42.25v-20.5Z M14 21.75 32 32l18-10.25 M32 32v20.5" fill="none" stroke="#000" stroke-width="3.8" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

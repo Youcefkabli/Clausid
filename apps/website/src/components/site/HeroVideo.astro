@@ -1,0 +1,87 @@
+---
+import Video from "@/components/media/Video.astro";
+import Button from "@/components/Button.astro";
+---
+
+<div class="hero-video">
+  <Video
+    id="hero-film"
+    src="/media/hero.mp4"
+    poster="/media/hero-poster.webp"
+    variant="auto"
+    autoplay={false}
+    preload="none"
+    aria-hidden="true"
+  />
+  <Button
+    variant="play"
+    label="Play background video"
+    aria-controls="hero-film"
+    hidden
+  />
+</div>
+
+<script>
+  const video = document.querySelector<HTMLVideoElement>("#hero-film");
+  const toggle = document.querySelector<HTMLButtonElement>(
+    '[aria-controls="hero-film"]',
+  );
+  if (video && toggle) {
+    const motion = matchMedia("(prefers-reduced-motion: reduce)");
+    let enabled = !motion.matches;
+    let visible = false;
+    const updatePlayback = () => {
+      if (enabled && visible && !document.hidden) {
+        void video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+    const updateButton = () => {
+      toggle.setAttribute("aria-pressed", String(!video.paused));
+      toggle.setAttribute(
+        "aria-label",
+        video.paused ? "Play background video" : "Pause background video",
+      );
+    };
+    video.addEventListener("play", updateButton);
+    video.addEventListener("pause", updateButton);
+    toggle.hidden = false;
+    toggle.addEventListener("click", () => {
+      enabled = video.paused;
+      updatePlayback();
+    });
+    motion.addEventListener("change", () => {
+      enabled = !motion.matches;
+      updatePlayback();
+    });
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      updatePlayback();
+    }).observe(video);
+    document.addEventListener("visibilitychange", updatePlayback);
+  }
+</script>
+
+<style>
+  .hero-video {
+    background: #000;
+  }
+  .hero-video :global(video) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.46;
+  }
+  .hero-video :global(button) {
+    position: absolute;
+    bottom: var(--space-4);
+    right: var(--space-4);
+    pointer-events: auto;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+  .hero-video :global(button[hidden]) {
+    display: none;
+  }
+</style>

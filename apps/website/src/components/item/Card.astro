@@ -1,0 +1,366 @@
+---
+import type { HTMLAttributes } from "astro/types";
+import Eyebrow from "@/components/typography/Eyebrow.astro";
+import Heading from "@/components/typography/Heading.astro";
+import Paragraph from "@/components/typography/Paragraph.astro";
+import Button from "@/components/Button.astro";
+import ButtonWrapper from "@/components/wrapper/ButtonWrapper.astro";
+import Img from "@/components/media/Img.astro";
+import Overlay from "@/components/media/Overlay.astro";
+
+type ImageSource = ImageMetadata | string;
+
+type Base = HTMLAttributes<"div"> & {
+  /** Set to `false` to omit the component. */
+  render?: boolean;
+  /** Eyebrow text. Supports inline markup. */
+  eyebrow?: string;
+  /** Card title. Supports inline markup. */
+  heading?: string;
+  /** Heading level. */
+  headingTag?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+  /** Body text. Supports inline markup. */
+  text?: string;
+  /** Button label. Omit to hide the button. */
+  buttonLabel?: string;
+  /** Button destination. Omit for a `<button>`. */
+  buttonHref?: string;
+  /** Card layout. */
+  variant?: "default" | "cover" | "stacked" | "bento";
+  /** Color theme of element and its children. */
+  theme?: "inherit" | "light" | "dark" | "brand" | "invert";
+};
+
+type Props = Base &
+  (
+    | {
+        variant?: "default" | "bento";
+        image?: never;
+        imageAlt?: never;
+      }
+    | {
+        variant: "cover";
+        /** Image source. */
+        image?: ImageSource;
+        /** Image alt text. Omit for decorative images. */
+        imageAlt?: string;
+      }
+    | {
+        variant: "stacked";
+        /** Color theme of element and its children. */
+        theme?: never;
+        /** Image source. */
+        image?: ImageSource;
+        /** Image alt text. Omit for decorative images. */
+        imageAlt?: string;
+      }
+  );
+
+type AllProps = Base & {
+  image?: ImageSource;
+  imageAlt?: string;
+};
+
+const {
+  render = true,
+  eyebrow,
+  heading,
+  headingTag = "h3",
+  text,
+  buttonLabel,
+  buttonHref,
+  variant = "default",
+  theme = "inherit",
+  image,
+  imageAlt,
+  class: className,
+  ...rest
+} = Astro.props as AllProps;
+
+const hasImage = (variant === "stacked" || variant === "cover") && !!image;
+const hasContent = !!(eyebrow || heading || text || buttonLabel);
+const hasTheme = variant !== "stacked" && theme !== "inherit";
+
+/* The button each variant closes with, so a set of cards reads as one system.
+   A link carries no emphasis of its own, so the two are picked together. */
+const buttonKind =
+  variant === "stacked"
+    ? ({ variant: "link" } as const)
+    : ({ emphasis: variant === "cover" ? "primary" : "secondary" } as const);
+
+if (import.meta.env.DEV && render) {
+  if (variant === "stacked" && theme !== "inherit") {
+    console.warn(
+      '[lumos] <Card variant="stacked"> has no surface to color, so `theme` was dropped. It keeps the theme around it.',
+    );
+  }
+  if (variant === "default" && image) {
+    console.warn(
+      '[lumos] <Card variant="default"> holds no image, so `image` was dropped. Use the cover or stacked variant to show it.',
+    );
+  }
+  if ((variant === "stacked" || variant === "cover") && !image) {
+    console.warn(
+      `[lumos] <Card variant="${variant}"> has no \`image\`, so it renders as a plain card.`,
+    );
+  }
+}
+---
+
+{render && (hasContent || hasImage) && (
+  <div
+    class:list={[
+      "card_wrap",
+      variant !== "default" && variant,
+      hasTheme && `theme-${theme}`,
+      className,
+    ]}
+    {...rest}
+  >
+    {variant === "bento" && (
+      <div class="card_bento-visual">
+        <slot name="visual" />
+      </div>
+    )}
+    {hasImage && (
+      <div class="card_visual">
+        <Img src={image!} alt={imageAlt} />
+        {variant === "cover" && <Overlay variant="gradient" />}
+      </div>
+    )}
+    {hasContent && (
+      <div class="card_content margin-trim">
+        <Eyebrow>
+          <Fragment set:html={eyebrow} />
+        </Eyebrow>
+        <Heading tag={headingTag} variant="h5">
+          <Fragment set:html={heading} />
+        </Heading>
+        <Paragraph>
+          <Fragment set:html={text} />
+        </Paragraph>
+        <ButtonWrapper>
+          {buttonHref ? (
+            <Button element="link" href={buttonHref} {...buttonKind}>
+              {buttonLabel}
+            </Button>
+          ) : (
+            <Button {...buttonKind}>{buttonLabel}</Button>
+          )}
+        </ButtonWrapper>
+      </div>
+    )}
+  </div>
+)}
+
+<style is:global>
+  @layer components {
+    .card_wrap {
+      --_padding: var(--space-6);
+      --_min-height: 20rem;
+      --_visual-ratio: 3 / 2;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: var(--_padding);
+      position: relative;
+      background-color: var(--background-2);
+      border-radius: var(--radius-main);
+      overflow: clip;
+
+      &.cover {
+        min-height: var(--_min-height);
+      }
+      &.stacked {
+        background-color: transparent;
+        overflow: visible;
+      }
+    }
+
+    .card_visual {
+      position: relative;
+      width: 100%;
+      flex: none;
+      border-radius: inherit;
+      overflow: clip;
+
+      .stacked > & {
+        aspect-ratio: var(--_visual-ratio);
+      }
+
+      .cover > & {
+        position: absolute;
+        inset: 0;
+        height: 100%;
+        pointer-events: none;
+      }
+
+      > :is(.image, .video) {
+        width: 100%;
+        height: 100%;
+      }
+    }
+
+    /* Media fills its box, be that the whole card or the band across its top.
+       The component layer puts this above the `height: auto` every image and
+       video starts from. */
+    .card_visual > :is(.image, .video) {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Buttons closing a card sit on its floor, however tall the row around it
+       grows. This outranks the margin `.button-wrapper` sets for itself. */
+    .card_content > .button-wrapper:last-child {
+      margin-top: auto;
+      padding-top: var(--space-6);
+    }
+
+    .card_content {
+      display: flex;
+      flex-direction: column;
+      align-items: var(--_alignment, start);
+      text-align: var(--_alignment, start);
+      flex-grow: 1;
+      width: 100%;
+      max-width: 100%;
+      padding: var(--_padding);
+
+      .cover > & {
+        z-index: 1;
+      }
+
+      .stacked > & {
+        padding-inline: 0;
+        padding-top: 0;
+      }
+    }
+
+    .card_wrap:has(.button_wrap) {
+      .button_wrap::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+      }
+
+      .card_content a:not(.button_wrap) {
+        position: relative;
+        z-index: 1;
+      }
+
+      .image {
+        transition: scale calc(var(--hover-duration) * 2) var(--hover-ease);
+      }
+
+      @media (hover: hover) {
+        &:hover .image {
+          scale: 1.04;
+        }
+      }
+    }
+  }
+</style>
+
+<style is:global>
+  @layer components {
+    .card_wrap.bento {
+      --card-pad: clamp(1.3rem, 2.78vw, 2.5rem);
+      --eyebrow-color: #c9c3d0;
+      --_alignment: start;
+      text-align: start;
+      color: white;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      min-height: clamp(22rem, 31.2vw, 28rem);
+      gap: 0;
+      border: 1px solid #ffffff0d;
+      border-radius: 1.25rem;
+      background:
+        radial-gradient(90% 55% at 50% 0%, #6100ff2e, transparent 70%),
+        linear-gradient(#131118, #0c0b0f);
+      & .card_content {
+        align-self: end;
+        padding: var(--card-pad);
+        gap: 0.8rem;
+      }
+      & .card_content > * {
+        margin: 0;
+      }
+      & .eyebrow_wrap {
+        color: var(--eyebrow-color);
+        gap: 0.4rem;
+        margin-bottom: 0.7rem;
+      }
+      & .eyebrow_text {
+        font-size: 0.75rem;
+      }
+      & .eyebrow_marker {
+        background: transparent;
+        border: 1px solid currentColor;
+        border-radius: 0.12rem;
+        width: 0.55rem;
+        height: 0.65rem;
+      }
+      & .heading {
+        font-weight: 500;
+        line-height: 1.12;
+        letter-spacing: -0.025em;
+      }
+      & .text {
+        color: #b9b4bf;
+        font-size: var(--text-main);
+        line-height: 1.6;
+      }
+      & .card_bento-visual {
+        display: grid;
+        align-items: center;
+        padding: var(--card-pad) var(--card-pad) 0;
+        min-width: 0;
+      }
+      & .product-preview_wrap {
+        max-width: 24rem;
+        margin: auto;
+      }
+      &[data-light] {
+        --eyebrow-color: #544b68;
+        color: #120d20;
+        background: linear-gradient(135deg, #f7f4ff, #e7dfff);
+      }
+      &[data-light] .text {
+        color: #514a5b;
+      }
+      @media (width >= 64rem) {
+        &[data-wide] {
+          grid-column: span 2;
+          grid-template-columns: 38% minmax(0, 1fr);
+          grid-template-rows: 1fr;
+        }
+        &[data-wide] .card_content {
+          grid-area: 1/1;
+          padding-right: 0;
+        }
+        &[data-wide] .card_bento-visual {
+          grid-area: 1/2;
+          align-items: end;
+          padding: var(--card-pad) 0 0 var(--card-pad);
+          overflow: hidden;
+        }
+        &[data-wide] .product-preview_wrap {
+          width: 112%;
+          max-width: none;
+          margin: 0;
+          transform: translateY(0.5rem);
+        }
+        &[data-wide] .product-preview_wrap img {
+          border-radius: 0.65rem 0 0 0;
+        }
+      }
+      @media (width < 64rem) {
+        min-height: 0;
+        & .card_bento-visual {
+          padding-top: 1.5rem;
+        }
+      }
+    }
+  }
+</style>
