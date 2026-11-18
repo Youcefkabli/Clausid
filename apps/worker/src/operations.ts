@@ -12,7 +12,7 @@ const schemas = {
     workspace_projects: ['id', 'project'],
     workspace_documents: ['id', 'data'],
   },
-  contract: { state: ['id', 'value'], files: ['id', 'data'], edits: ['id', 'revision'] },
+  contract: { state: ['id', 'value'], files: ['id', 'data'], edits: ['id', 'revision'], review_requests: ['id', 'digest'] },
 } as const
 
 type Kind = keyof typeof schemas
@@ -73,6 +73,7 @@ export function snapshotObject(ctx: DurableObjectState, kind: Kind, request: Req
 
     if (request.method !== 'PUT') throw new HttpError(405, 'Operation unavailable.')
     const snapshot = await request.json<Snapshot>()
+    if (kind === 'contract' && snapshot.tables && !Object.hasOwn(snapshot.tables, 'review_requests')) snapshot.tables.review_requests = []
     if (kind === 'directory' && snapshot.tables) {
       for (const table of ['workspace_requests', 'workspace_projects', 'workspace_documents']) {
         if (!Object.hasOwn(snapshot.tables, table)) snapshot.tables[table] = []

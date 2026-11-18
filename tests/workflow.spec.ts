@@ -1,18 +1,33 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { expect, test } from '@playwright/test'
+import { expect as playwrightExpect, test } from '@playwright/test'
 import { strFromU8, unzipSync } from 'fflate'
 import type { APIRequestContext, Page, WebSocketRoute } from '@playwright/test'
 import { linkFor } from './mailpit.ts'
 import { workspaceFixture, workspacePdf } from './workspace-fixture.ts'
 import { consentVersion } from '../packages/contracts/src/index.ts'
 
+// A page can be waiting for the real auth service's 60-second retry window.
+const expect = playwrightExpect.configure({timeout: 75_000})
 const origin = `http://127.0.0.1:${process.env.CLAUSID_VITE_PORT ?? '5173'}`
+test.describe.configure({timeout: 200_000})
 const password = 'clausid-testing-123'
 const post = (request: APIRequestContext, path: string, data: object) =>
   request.post(origin + path, { data, headers: { Origin: origin } })
 
 async function account(page: Page, name: string, email: string) {
+  // The two verified sessions share a loopback IP with the other browser tests.
+  // Honor Better Auth's retry interval when the combined workflows fill its window.
+  await page.route(/\/api\/auth\/(?:get-session|sign-in\/email|sign-up\/email)(?:\?|$)/, async route => {
+    let response = await route.fetch()
+    if (response.status() === 429) {
+      const seconds = Number(response.headers()['x-retry-after'] ?? response.headers()['retry-after'] ?? 60)
+      await delay((seconds + 1) * 1000)
+      response = await route.fetch()
+    }
+    await route.fulfill({response})
+  })
   await page.goto('/')
   await page.getByRole('link', { name: 'Sign up' }).click()
   await page.getByLabel(/^Name\b/).fill(name)
@@ -29,7 +44,7 @@ async function account(page: Page, name: string, email: string) {
 
 test('verified users collaborate, freeze an exact PDF, and sign with evidence', async ({ browser }) => {
   const owner = await browser.newContext()
-  const editor = await browser.newContext()
+  const editor = await browser.newContext({ hasTouch: true })
   const first = await owner.newPage()
   const second = await editor.newPage()
   const suffix = crypto.randomUUID().slice(0, 8)
@@ -151,6 +166,12 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       await expect(appHeader.getByRole('button', { name: 'Export', exact: true })).toBeVisible()
       await expect(appHeader.getByRole('button', { name: 'Account settings' })).toBeVisible()
     }
+    const peopleTool = first.getByRole('button', {name:'People',exact:true})
+    await peopleTool.focus()
+    await peopleTool.press('Enter')
+    await expect(first.getByRole('dialog', {name:'People',exact:true})).toBeVisible()
+    await first.keyboard.press('Escape')
+    await expect(peopleTool).toBeFocused()
     await first.setViewportSize(desktopViewport)
     const canvas = first.locator('.contract-editor')
     await expect(canvas).toBeVisible()
@@ -160,7 +181,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
         && Math.abs(bounds.bottom - innerHeight) < 1
     })).toBe(true)
     await expect(first.getByRole('group', { name: 'Open documents' })).toContainText('Services agreement')
-    await expect(first.getByLabel('Layers and assets', { exact: true })).toBeVisible()
+    await expect(first.getByLabel('Document navigation', { exact: true })).toBeVisible()
     await expect(first.getByRole('toolbar', { name: 'Canvas tools' })).toBeVisible()
     await expect(first.locator('article[aria-label="Contract artboard"]').getByRole('textbox', { name: 'Contract document' })).toHaveCount(1)
     await expect(first.getByRole('button', { name: 'Template preview', exact: true })).toHaveCount(0)
@@ -237,7 +258,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await first.getByRole('button', { name: 'Freeze and send' }).click()
     await expect(first.getByText('Awaiting signatures', { exact: true })).toBeVisible()
     await expect(appHeader.getByRole('group', { name: 'Open documents' })).toContainText('Services agreement')
-    await expect(first.getByLabel('Layers and assets', { exact: true })).toBeVisible()
+    await expect(first.getByLabel('Document navigation', { exact: true })).toBeVisible()
     await expect(first.getByRole('toolbar', { name: 'Canvas tools' })).toBeVisible()
     const frozenPage = first.getByRole('article', { name: 'Contract artboard' }).getByRole('group', { name: 'PDF page 1' })
     await expect(frozenPage.getByRole('img', { name: 'Page 1' })).toBeVisible()
@@ -488,39 +509,89 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await expect(second).toHaveURL(origin + sourcePath)
     await expect(second.getByRole('img', { name: 'Page 1' })).toBeVisible()
 
+    const reviewerViewport = second.viewportSize()!
+    await second.setViewportSize({ width: 390, height: 844 })
+    const collaborationRail = second.getByLabel('Collaboration tools', { exact: true })
+    const icons = collaborationRail.getByRole('button')
+    for (const [index, label] of ['Comments', 'Suggestions', 'People'].entries()) {
+      await expect(icons.nth(index)).toHaveAccessibleName(label)
+      await icons.nth(index).tap()
+      const drawer = second.getByRole('dialog', { name: label, exact: true })
+      await expect(drawer).toBeVisible()
+      const closeDrawer = drawer.getByRole('button', { name: /^Close/i })
+      await expect(closeDrawer).toBeInViewport({ ratio: 1 })
+      if (label === 'People') {
+        await second.screenshot({ path: test.info().outputPath('mobile-people.png'), animations: 'disabled' })
+      }
+      await closeDrawer.tap()
+      await expect(drawer).toBeHidden()
+    }
+    await second.setViewportSize(reviewerViewport)
     await expect(second.getByRole('button', { name: 'Signature', exact: true })).toBeDisabled()
-    await second.getByRole('button', { name: 'Propose text replacement', exact: true }).click()
-    await expect(second.getByRole('checkbox', { name: 'Propose a text replacement' })).toBeChecked()
-    await second.getByRole('combobox', { name: 'Source line' }).click()
-    await second.getByRole('option', { name: '2. Pay in 15 days', exact: true }).click()
-    await second.getByRole('textbox', { name: 'Text to replace' }).fill('15')
-    await second.getByRole('textbox', { name: 'Replacement text' }).fill('30')
+    const pageTwo = second.getByRole('group', {name: 'PDF page 2', exact: true})
+    await pageTwo.scrollIntoViewIfNeeded()
+    const sourceLine = pageTwo.locator('[data-pdf-item]').filter({hasText: /^15 days$/})
+    await expect(sourceLine).toBeVisible()
+    const words = (await sourceLine.boundingBox())!
+    await second.mouse.move(words.x + 0.5, words.y + words.height / 2)
+    await second.mouse.down()
+    await second.mouse.move(words.x + words.width - 0.5, words.y + words.height / 2, {steps:8})
+    await second.mouse.up()
+    await expect(second.getByRole('textbox', { name: 'Text to replace' })).toHaveValue('15 days')
+    await second.getByRole('textbox', { name: 'Replacement text' }).fill('30 days')
     await second.getByRole('textbox', { name: 'Annotation', exact: true }).fill('Confirm the delivery schedule.')
-    await second.getByRole('button', { name: 'Add annotation' }).click()
-    await expect(second.getByText('Confirm the delivery schedule.')).toBeVisible()
+    await second.getByRole('button', { name: 'Submit suggestion' }).click()
+    await expect(second.getByRole('textbox', {name:'Annotation',exact:true})).toHaveValue('')
+    await expect(second.getByText('Confirm the delivery schedule.',{exact:true})).toBeVisible()
     const annotated = await (await second.request.get('/api' + sourcePath)).json()
     const annotation = annotated.annotations[0]
-    expect(annotation.page).toBe(1)
+    const retryId = crypto.randomUUID()
+    const overlapping = {action:'add', requestId:retryId, page:2, text:'Alternative date', displayedDigest:annotated.sourcePdf.digest,
+      replacement:{block:1, expected:'15 days', replacement:'20 days'}}
+    const endpoint = '/api' + sourcePath + '/annotation'
+    const alternative = await post(second.request, endpoint, overlapping)
+    expect(alternative.status()).toBe(200)
+    const secondProposal = (await alternative.json()).annotations.at(-1)
+    expect((await (await post(second.request, endpoint, overlapping)).json()).annotations).toHaveLength(2)
+    expect((await post(second.request, endpoint, {...overlapping, text:'different payload'})).status()).toBe(409)
+    expect(annotation.page).toBe(2)
     expect((await post(second.request, '/api' + sourcePath + '/annotation', {
       action: 'decide', id: annotation.id, decision: 'Approved',
     })).status()).toBe(403)
     expect((await post(first.request, '/api' + sourcePath + '/preview', {
       revision: annotated.revision, signers: [ownerEmail],
     })).status()).toBe(409)
-    await first.getByRole('button', { name: 'Annotations', exact: true }).click()
+    await first.getByRole('button', { name: 'Suggestions', exact: true }).click()
     await expect(first.getByText('Confirm the delivery schedule.')).toBeVisible()
-    await first.getByRole('button', { name: 'Reply', exact: true }).click()
+    await first.getByRole('button', { name: 'Reply', exact: true }).first().click()
     await first.getByRole('textbox', { name: 'Reply to annotation' }).fill('The schedule is accepted.')
     await first.getByRole('button', { name: 'Post reply' }).click()
     await expect(second.getByText('The schedule is accepted.')).toBeVisible()
-    await first.getByRole('button', { name: 'Approve', exact: true }).click()
+    await first.getByRole('button', { name: 'Approve', exact: true }).first().click()
     await expect(second.getByText('Approved', { exact: true })).toBeVisible()
-    await first.getByRole('dialog', { name: 'PDF annotations' }).getByRole('button', { name: 'Close', exact: true }).click()
+    const reviewerPage = second.getByRole('group', { name: 'Clean negotiated PDF' })
+      .getByRole('group', { name: 'PDF page 2', exact: true })
+    await reviewerPage.scrollIntoViewIfNeeded()
+    await expect(reviewerPage).toContainText('Pay in 30 days')
+    const approvedState = await first.request.get('/api' + sourcePath).then(r => r.json())
+    expect((await post(first.request, endpoint,{action:'decide',id:secondProposal.id,decision:'Approved'})).status()).toBe(422)
+    const failedApproval = await first.request.get('/api' + sourcePath).then(r => r.json())
+    expect(failedApproval.negotiatedPdf.digest).toBe(approvedState.negotiatedPdf.digest)
+    expect(failedApproval.annotations.at(-1).decision).toBeUndefined()
+    expect((await post(second.request,endpoint,{...overlapping,requestId:crypto.randomUUID()})).status()).toBe(409)
+    expect((await post(first.request, endpoint,{action:'decide',id:secondProposal.id,decision:'Rejected'})).status()).toBe(200)
+    await first.getByRole('button', {name:'Index', exact:true}).click()
+    await first.getByRole('textbox', {name:'Search index'}).fill('30 days')
+    await first.getByText('Page 2 · 30 days', {exact:true}).click()
+    await expect.poll(() => first.evaluate(() => window.getSelection()?.toString())).toBe('30 days')
+    await first.screenshot({path:test.info().outputPath('negotiated-editor.png')})
+    await first.getByLabel('Suggestions panel', {exact: true}).getByRole('button', { name: 'Close Suggestions', exact: true }).click()
     const cleanCanvas = first.getByRole('group', { name: 'Clean negotiated PDF' })
+    await cleanCanvas.getByRole('group', {name: 'PDF page 2', exact: true}).scrollIntoViewIfNeeded()
     await expect(cleanCanvas).toContainText('Pay in 30 days')
     await expect(cleanCanvas).toContainText('Pay in 15 days')
     const resolved = await (await first.request.get('/api' + sourcePath)).json()
-    expect(resolved.annotations[0].edit).toMatchObject({ expected: '15', replacement: '30', block: 1 })
+    expect(resolved.annotations[0].edit).toMatchObject({ expected: '15 days', replacement: '30 days', block: 1 })
     const negotiated = await first.request.get('/api' + sourcePath + '/negotiated-pdf/' + resolved.negotiatedPdf.digest)
     expect(negotiated.status()).toBe(200)
     const negotiatedBytes = await negotiated.body()
@@ -536,6 +607,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     expect(cleanPreview.status()).toBe(200)
     const { id: sourcePreview, digest } = await cleanPreview.json()
     expect(digest).toBe(resolved.negotiatedPdf.digest)
+    await first.getByRole('group', {name: 'Signing preview PDF'}).getByRole('group', {name: 'PDF page 2', exact:true}).scrollIntoViewIfNeeded()
     await expect(first.getByRole('group', { name: 'Signing preview PDF' })).toContainText('Pay in 30 days')
     expect(await (await first.request.get('/api' + sourcePath + '/preview/' + sourcePreview)).body()).toEqual(negotiatedBytes)
     await first.getByRole('button', { name: 'Freeze and send' }).click()
@@ -544,13 +616,16 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       versionId: sourcePreview, digest, name: 'Owner Lee', consent: true, consentVersion,
     })).status()).toBe(200)
     expect(await (await first.request.get('/api' + sourcePath + '/pdf')).body()).toEqual(negotiatedBytes)
+    const pdfEvidence = unzipSync(await (await first.request.get('/api' + sourcePath + '/evidence')).body())
+    expect(createHash('sha256').update(pdfEvidence['contract.pdf']).digest('hex')).toBe(digest)
+    expect(JSON.parse(strFromU8(pdfEvidence['signing-evidence.json'])).sha256).toBe(digest)
     await second.reload()
     await expect(second.getByRole('img', { name: 'Page 1' })).toBeVisible()
-    await second.getByRole('button', { name: 'Annotations', exact: true }).click()
+    await second.getByRole('button', { name: 'Suggestions', exact: true }).click()
     await expect(second.getByText('Approved', { exact: true })).toBeVisible()
-    await expect(second.getByText('Original: 15', { exact: true })).toBeVisible()
-    await expect(second.getByText('Replacement: 30', { exact: true })).toBeVisible()
-    await expect(second.getByRole('button', { name: 'Add annotation' })).toHaveCount(0)
+    await expect(second.getByText('Original: 15 days', { exact: true })).toHaveCount(2)
+    await expect(second.getByText('Replacement: 30 days', { exact: true })).toBeVisible()
+    await expect(second.getByRole('button', { name: 'Submit suggestion' })).toHaveCount(0)
 
   } finally {
     await owner.close()
@@ -645,6 +720,42 @@ test('only the service provider can share a workspace draft and approve it for s
     await partyEditor.press('End')
     await party.keyboard.insertText(' Counterproposal: 45 days.')
     await expect(ownerEditor).toContainText('Counterproposal: 45 days.')
+    // Select the last sentence and negotiate a native replacement in two sessions.
+    await partyEditor.evaluate(element => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const offset = node.textContent!.indexOf('45 days.')
+        if (offset < 0) continue
+        const range = document.createRange()
+        range.setStart(node, offset); range.setEnd(node, offset + 8)
+        getSelection()!.removeAllRanges(); getSelection()!.addRange(range)
+        return
+      }
+      throw new Error('Counterproposal not found.')
+    })
+    await party.getByRole('button', {name: 'Comment on selection'}).click()
+    await party.getByRole('textbox', {name: 'Comment', exact:true}).fill('Check the settlement period.')
+    await party.getByRole('button', {name: 'Post comment'}).click()
+    await expect(party.getByRole('textbox', {name:'Comment', exact:true})).toHaveValue('')
+    await expect(party.getByText('Check the settlement period.', {exact:true})).toBeVisible()
+    await party.getByRole('button', {name:'Suggestions', exact:true}).click()
+    await party.getByRole('textbox', {name:'Replacement text'}).fill('60 days.')
+    await party.getByRole('button', {name:'Submit suggestion'}).click()
+    await expect(party.getByText('Replacement: 60 days.', {exact:true})).toBeVisible()
+    const nativeApi = '/api' + contractPath
+    const openNative = await owner.request.get(nativeApi).then(r => r.json())
+    expect((await post(owner.request, nativeApi + '/preview', {revision:openNative.revision, signers:[ownerEmail]})).status()).toBe(409)
+    await owner.getByRole('button', {name:'Suggestions', exact:true}).click()
+    await owner.getByRole('button', {name:'Approve', exact:true}).click()
+    await expect(ownerEditor).toContainText('Counterproposal: 60 days.')
+    await expect(partyEditor).toContainText('Counterproposal: 60 days.')
+    const reviewedNative = await owner.request.get(nativeApi).then(r => r.json())
+    expect((await post(owner.request, nativeApi + '/preview', {revision:reviewedNative.revision, signers:[ownerEmail]})).status()).toBe(200)
+    const originalSuggestion = openNative.threads.find((item: {replacement?:string}) => item.replacement === '60 days.')
+    const staleReview = await post(owner.request, nativeApi + '/review', {requestId:crypto.randomUUID(), change:{
+      action:'add',anchor:originalSuggestion.anchor,replacement:'90 days.',text:''}})
+    expect(staleReview.status()).toBe(409)
+    await owner.getByRole('button', {name:'Close Suggestions', exact:true}).click()
     await party.getByRole('button', { name: 'Export', exact: true }).click()
     await expect(party.getByRole('menuitem', { name: 'Share', exact: true })).toBeDisabled()
     await expect(party.getByRole('menuitem', { name: 'Prepare for signing', exact: true })).toBeDisabled()
@@ -652,6 +763,14 @@ test('only the service provider can share a workspace draft and approve it for s
       expect((await post(party.request, '/api' + contractPath + '/' + action, {})).status()).toBe(403)
     }
 
+    await party.keyboard.press('Escape')
+    await ownerEditor.click()
+    await owner.getByRole('button', {name:'Edit section',exact:true}).click()
+    await owner.getByRole('textbox', {name:'Section title'}).fill('Payment terms')
+    await owner.getByRole('button', {name:'Save section'}).click()
+    await expect(party.getByRole('button', {name:'Payment terms',exact:true})).toBeVisible()
+    await party.reload()
+    await expect(party.getByRole('button', {name:'Payment terms',exact:true})).toBeVisible()
     const uploadedTitle = 'Studio Services Agreement'
     const originalPdf = await readFile(new URL('../packages/pdf-engine/tests/fixtures/pdf-lib-subset.pdf', import.meta.url))
     const workspacePath = '/?workspace=' + id
@@ -676,13 +795,12 @@ test('only the service provider can share a workspace draft and approve it for s
     await party.getByRole('link', { name: uploadedTitle, exact: true }).click()
     await expect(party).toHaveURL(origin + uploadedPath)
 
-    await party.getByRole('button', { name: 'Annotations', exact: true }).click()
-    await party.getByRole('checkbox', { name: 'Propose a text replacement' }).check()
+    await party.getByRole('button', { name: 'Suggestions', exact: true }).click()
     await party.getByRole('combobox', { name: 'Source line' }).click()
     await party.getByRole('option', { name: /^\d+\. 15$/ }).click()
     await expect(party.getByRole('textbox', { name: 'Text to replace' })).toHaveValue('15')
     await party.getByRole('textbox', { name: 'Replacement text' }).fill('10')
-    await party.getByRole('button', { name: 'Add annotation' }).click()
+    await party.getByRole('button', { name: 'Submit suggestion' }).click()
     await expect(party.getByText('Replacement: 10', { exact: true })).toBeVisible()
     const proposed = await party.request.get(uploadedApi).then(response => response.json())
     expect((await post(party.request, uploadedApi + '/annotation', {
@@ -692,11 +810,11 @@ test('only the service provider can share a workspace draft and approve it for s
       revision: proposed.revision, signers: [ownerEmail],
     })).status()).toBe(409)
 
-    await owner.getByRole('button', { name: 'Annotations', exact: true }).click()
-    const history = owner.getByRole('dialog', { name: 'PDF annotations' })
+    await owner.getByRole('button', { name: 'Suggestions', exact: true }).click()
+    const history = owner.getByLabel('Suggestions panel', {exact: true})
     await history.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect(history.getByText('Approved', { exact: true })).toBeVisible()
-    await history.getByRole('button', { name: 'Close', exact: true }).click()
+    await history.getByRole('button', { name: 'Close Suggestions', exact: true }).click()
     const deadline = /within\s+10\s+business\s+days/
     await expect(owner.getByRole('group', { name: 'Clean negotiated PDF' })).toContainText(deadline)
     const approved = await owner.request.get(uploadedApi).then(response => response.json())
@@ -732,7 +850,7 @@ test('only the service provider can share a workspace draft and approve it for s
     await expect(owner.getByRole('status').filter({ hasText: /^Signed$/ })).toBeVisible()
     await reopenPdf('Signed')
     expect(await (await owner.request.get(uploadedApi + '/pdf')).body()).toEqual(negotiatedBytes)
-    await owner.getByRole('button', { name: 'Annotations', exact: true }).click()
+    await owner.getByRole('button', { name: 'Suggestions', exact: true }).click()
     await expect(history.getByText('Approved', { exact: true })).toBeVisible()
   } finally {
     await firstContext.close()

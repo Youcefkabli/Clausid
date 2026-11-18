@@ -1,5 +1,4 @@
 import type { MarkupTool, MarkupControls } from './app/canvas-editor/pdf-markup.tsx'
-import { PdfAnnotations } from './pdf-annotations.tsx'
 import { AccountSettingsDialog } from './account-settings.tsx'
 import CanvasEditor from './app/canvas-editor/page.tsx'
 import type { CanvasHeader } from './app/canvas-editor/page.tsx'
@@ -45,8 +44,6 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [started, setStarted] = useState(false)
   const [error, setError] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
-  const [annotationsOpen, setAnnotationsOpen] = useState(false)
-  const [proposeReplacement, setProposeReplacement] = useState(false)
   const [share, setShare] = useState(false)
   const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string; canManage: boolean }>()
   const [prepare, setPrepare] = useState(false)
@@ -63,29 +60,27 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [signingName, setSigningName] = useState('')
   const [consent, setConsent] = useState(false)
   const [copyId] = useState(() => crypto.randomUUID())
-  const latestPdfView = useRef<Pick<ContractView, 'revision' | 'status'> | undefined>(undefined)
+  const latestView = useRef<ContractView | null>(null)
   const publishView = useCallback((view: ContractView) => {
-    if (view.sourcePdf) {
-      const latest = latestPdfView.current
-      if (latest && (view.revision < latest.revision
-        || (view.status === 'Draft' && latest.status !== 'Draft'))) return
-      latestPdfView.current = { revision: view.revision, status: view.status }
-    }
+    const latest = latestView.current
+    if (latest && (view.revision < latest.revision || (view.status === 'Draft' && latest.status !== 'Draft')
+      || ((latest.status === 'Signed' || latest.status === 'Voided') && view.status !== latest.status))) return
+    latestView.current = view
     project(store, id, view)
   }, [store, id])
   useEffect(() => {
     let active = true
     const abort = new AbortController()
-    let current: ContractView | null = null
-    const receive = (view: ContractView) => { current = view; publishView(view) }
+    const receive = publishView
     void api<ContractView>('/' + id, undefined, abort.signal).then((view) => {
-      if (active && !current) receive(view)
-    }).catch((reason) => { if (active && !current) setError(errorMessage(reason)) })
+      if (active && !latestView.current) receive(view)
+    }).catch((reason) => { if (active && !latestView.current) setError(errorMessage(reason)) })
     const close = connectContract(id, room.document, room.awareness, (message) => {
       if (message.type === 'state') {
         receive(message.contract)
         if (message.draft !== undefined) setStarted(true)
       }
+      const current = latestView.current
       if ((message.type === 'ack' || message.type === 'edit') && current) {
         receive({ ...current, revision: Math.max(current.revision, message.revision) })
       }
@@ -146,20 +141,16 @@ export function ContractPage({ id, account, store, renderPage }: {
   const draft = contract.status === 'Draft'
   const owner = contract.role === 'owner'
   const canManage = owner && sharingAccess?.canManage
-  const canPrepare = canManage && !contract.annotations?.some(annotation => !annotation.withdrawn && !annotation.decision) && connection.ready && !connection.error && connection.pending === 0
+  const canPrepare = canManage && !contract.threads?.some(item => item.replacement !== undefined && !item.decision) && !contract.annotations?.some(annotation => !annotation.withdrawn && !annotation.decision) && connection.ready && !connection.error && connection.pending === 0
   const canEdit = draft && !contract.sourcePdf && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => { setError(''); setNotice(''); set(true) }
   const pageFeedback = <>
-    {!share && !prepare && !voidOpen && !signaturesOpen && !annotationsOpen && alerts}
+    {!share && !prepare && !voidOpen && !signaturesOpen && alerts}
     {connection.error && <div role="alert"><Banner status="error" title={connection.error}
       description={recoverable ? 'Copy your local changes before leaving this page.' : undefined} /></div>}
   </>
   const dialogs = <>
-    {contract.sourcePdf && contract.role !== 'signer' && <PdfAnnotations contract={contract}
-      open={annotationsOpen && !connection.ended} onOpenChange={open => { setAnnotationsOpen(open); setError('') }}
-      propose={proposeReplacement} setPropose={setProposeReplacement}
-      save={change => mutate('annotation', change)} busy={busy} error={error} />}
     <Dialog isOpen={share && draft && !connection.ended} onOpenChange={(open) => { setShare(open); if (!open) setError('') }} aria-label="Share contract">
       <div className="flow"><Heading level={2}>Share contract</Heading>
       {sharingAccess?.workspaceId && <div className="flow">
@@ -306,7 +297,6 @@ export function ContractPage({ id, account, store, renderPage }: {
     <FrozenPdf key={version?.id ?? negotiated?.digest ?? id} url={file + (version ? 'pdf' : draftPdfPath)}
       markup={markup} label={version ? undefined : negotiated ? 'Clean negotiated PDF' : 'Contract PDF'} />
   </Suspense>
-  const canAnnotate = contract.sourcePdf && contract.role !== 'signer' && !connection.ended
   const signatureAction = draft
     ? { label: 'Prepare for signing', open: canPrepare && !connection.ended ? () => openModal(setPrepare) : undefined }
     : { label: version?.canSign ? 'Sign contract' : 'View signatures',
@@ -337,11 +327,7 @@ export function ContractPage({ id, account, store, renderPage }: {
     syncStatus={draft && !connection.ended
       ? (!connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved')
       : contract.status}
-    onAnnotations={canAnnotate ? () => openModal(setAnnotationsOpen) : undefined}
-    onReplaceText={canAnnotate && draft ? () => {
-      setProposeReplacement(true)
-      openModal(setAnnotationsOpen)
-    } : undefined}
+    contract={contract} email={account.email} busy={busy} error={error} mutate={mutate}
     onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
     signatureAction={signatureAction}
     markup={markup}

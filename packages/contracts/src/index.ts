@@ -90,7 +90,7 @@ const pdfReplacement = z.object({
   expected: z.string().min(1).max(800),
   replacement: z.string().max(800),
 }).refine(edit => edit.expected !== edit.replacement, 'Enter different replacement text.')
-export type PdfTextBlock = { page: number; block: number; text: string }
+export type PdfTextBlock = { page: number; block: number; text: string; baseline: [number, number] }
 export type PdfTextEdit = z.infer<typeof pdfReplacement> & { page: number; offset: number }
 
 export const pdfMarkup = z.object({
@@ -99,9 +99,30 @@ export const pdfMarkup = z.object({
 })
 export type PdfMarkup = z.infer<typeof pdfMarkup>
 
+const quote = z.string().min(1).max(800)
+const pdfLocation = z.object({ x: z.number().finite(), y: z.number().finite(), offset: z.number().int().nonnegative().max(100_000) })
+export type PdfLocation = z.infer<typeof pdfLocation>
+const relativePosition = z.base64().min(1).max(256)
+const nativeAnchor = z.object({ start: relativePosition, end: relativePosition, quote })
+export type NativeAnchor = z.infer<typeof nativeAnchor>
+export const reviewAction = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('add'), anchor: nativeAnchor, text: z.string().trim().max(800),
+    replacement: z.string().max(800).optional() }).refine(v => v.replacement === undefined ? !!v.text : v.replacement !== v.anchor.quote),
+  z.object({ action: z.literal('reply'), id: identifier, text: quote }),
+  z.object({ action: z.literal('decide'), id: identifier, decision: z.enum(['Approved', 'Rejected', 'Resolved', 'Reopened']) }),
+  z.object({ action: z.literal('outline'), key: z.string().min(1).max(512), title: z.string().trim().min(1).max(180),
+    level: z.number().int().min(1).max(6), hidden: z.boolean() }),
+])
+export type ReviewChange = z.infer<typeof reviewAction>
+export type OutlineCorrection = Extract<z.infer<typeof reviewAction>, { action: 'outline' }>
+export type NativeThread = {
+  id: string; author: string; createdAt: string; anchor: NativeAnchor; text: string; replacement?: string
+  replies: PdfAnnotation['replies']; decision?: { status: 'Approved' | 'Rejected' | 'Resolved'; author: string; at: string }
+}
+export const reviewRequest = z.object({ requestId: z.uuid(), change: reviewAction })
 export const pdfAnnotationAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('add'), page: z.number().int().positive(), text: z.string().trim().max(800),
-    replacement: pdfReplacement.optional(), markup: pdfMarkup.optional() }).refine(change => change.text || change.replacement || change.markup, 'Enter an annotation or a replacement.'),
+    quote: quote.optional(), location: pdfLocation.optional(), displayedDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), requestId: z.uuid().optional(), replacement: pdfReplacement.optional(), markup: pdfMarkup.optional() }).refine(change => change.text || change.replacement || change.markup, 'Enter an annotation or a replacement.'),
   z.object({ action: z.literal('visibility'), id: identifier, withdrawn: z.boolean() }),
   z.object({ action: z.literal('reply'), id: identifier, text: z.string().trim().min(1).max(800) }),
   z.object({ action: z.literal('decide'), id: identifier, decision: z.enum(['Approved', 'Rejected']) }),
@@ -109,6 +130,8 @@ export const pdfAnnotationAction = z.discriminatedUnion('action', [
 export type PdfAnnotationChange = z.input<typeof pdfAnnotationAction>
 export type PdfAnnotation = {
   id: string; page: number; text: string; author: string; createdAt: string
+  quote?: string
+  location?: PdfLocation
   markup?: PdfMarkup
   withdrawn?: boolean
   edit?: PdfTextEdit
@@ -117,7 +140,9 @@ export type PdfAnnotation = {
 }
 export type ContractView = Summary & {
   revision: number
-  sourcePdf?: { name: string; pages: number }
+  sourcePdf?: { name: string; pages: number; digest: string }
+  threads?: NativeThread[]
+  outline?: OutlineCorrection[]
   negotiatedPdf?: { digest: string }
   annotations?: PdfAnnotation[]
   editors: { id: string; email: string }[]

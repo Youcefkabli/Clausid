@@ -1,6 +1,6 @@
 // Two matching lines give the test a precise page and line target.
 const stream = 'BT /F1 12 Tf 72 650 Td (Pay in 15 days) Tj ET\nBT /F1 12 Tf 72 600 Td (Pay in 15 days) Tj ET\n'
-const secondStream = 'BT /F1 12 Tf 72 650 Td (Payment schedule) Tj ET\n'
+const secondStream = 'BT /F1 12 Tf 72 650 Td (Payment schedule) Tj ET\nBT /F1 12 Tf 72 600 Td (Pay in 15 days) Tj ET\n'
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Count 2 /Kids [3 0 R 6 0 R] >>',

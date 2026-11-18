@@ -2,14 +2,14 @@ import { DurableObject } from 'cloudflare:workers'
 import * as Y from 'yjs'
 import { strToU8, zipSync } from 'fflate'
 import {
-  assignContract, clientMessage, consentText, consentVersion, freezeContract, inviteEditor, pdfAnnotationAction, previewContract,
+  assignContract, clientMessage, consentText, consentVersion, freezeContract, inviteEditor, pdfAnnotationAction, reviewRequest, previewContract,
   redeemInvite, signContract, titleInput,
 } from '@clausid/contracts'
-import type { ContractView, PdfAnnotation, PdfTextBlock, Role, ServerMessage, Signature, Status } from '@clausid/contracts'
+import type { ContractView, NativeThread, PdfAnnotation, PdfTextBlock, Role, ServerMessage, Signature, Status } from '@clausid/contracts'
 import type { Account, Env } from './http.ts'
 import { artifact, decode, encode, hex, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import { authorizedOperation, snapshotObject } from './operations.ts'
-import { validateDraft } from './draft.ts'
+import { reviewPassage, validateDraft } from './draft.ts'
 import { renderPdf, applyPdfMarkup } from './pdf.ts'
 import { inspectPdf, planPdfEdit, rewritePdf } from './pdf-rewrite.ts'
 
@@ -25,6 +25,7 @@ type RecordState = {
   workspaceJoins?: string[]
   status: Status; revision: number; invites: Invite[]; preview: Preview | null
   sourcePdf?: ContractView['sourcePdf'] & { digest: string }; annotations?: PdfAnnotation[]
+  outline?: ContractView['outline']; threads?: NativeThread[]
   negotiatedPdf?: { digest: string }
   version: Version | null; signatures: Signature[]; outbox: Mail[]; voidedAt?: string
 }
@@ -43,6 +44,7 @@ export class Contract extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS state (id TEXT PRIMARY KEY, value TEXT NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, data BLOB NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS edits (id TEXT PRIMARY KEY, revision INTEGER NOT NULL)')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS review_requests (id TEXT PRIMARY KEY, digest TEXT NOT NULL)')
     const record = ctx.storage.sql.exec<{ value: string }>("SELECT value FROM state WHERE id = 'contract'").toArray()[0]
     this.#state = record ? JSON.parse(record.value) : undefined
     const draft = this.#file('draft')
@@ -53,6 +55,13 @@ export class Contract extends DurableObject<Env> {
     const result = this.#queue.then(operation)
     this.#queue = result.catch(() => undefined)
     return result
+  }
+  async #receipt(account: Account, id: string, body: unknown) {
+    const key = account.id + '/' + id
+    const digest = await sha256(new TextEncoder().encode(JSON.stringify(body)))
+    const previous = this.ctx.storage.sql.exec<{ digest: string }>('SELECT digest FROM review_requests WHERE id = ?', key).toArray()[0]
+    if (previous && previous.digest !== digest) throw new HttpError(409, 'This request ID belongs to a different change.')
+    return { saved: !!previous, commit: () => this.ctx.storage.sql.exec('INSERT INTO review_requests VALUES (?, ?)', key, digest) }
   }
   #file(id: string) {
     const row = this.ctx.storage.sql.exec<{ data: ArrayBuffer }>('SELECT data FROM files WHERE id = ?', id).toArray()[0]
@@ -97,8 +106,10 @@ export class Contract extends DurableObject<Env> {
       createdAt: state.createdAt, hasSignatures: state.signatures.length > 0 || state.status === 'Signed',
       updatedAt: state.updatedAt ?? (lastRecordedActivity ? Date.parse(lastRecordedActivity) : undefined),
       id: state.id, title: state.title, status: state.status, revision: state.revision, role,
-      sourcePdf: state.sourcePdf && { name: state.sourcePdf.name, pages: state.sourcePdf.pages },
+      sourcePdf: state.sourcePdf && { name: state.sourcePdf.name, pages: state.sourcePdf.pages, digest: state.sourcePdf.digest },
       negotiatedPdf: state.negotiatedPdf,
+      threads: role === 'signer' ? undefined : state.threads,
+      outline: role === 'signer' ? undefined : state.outline,
       annotations: role === 'signer' ? undefined : state.annotations,
       editors: role === 'signer' ? [] : [state.owner, ...state.editors],
       invites: role === 'owner' && state.status === 'Draft'
@@ -132,12 +143,12 @@ export class Contract extends DurableObject<Env> {
     return {
       type: 'presence', clientId: attachment.clientId, clock: attachment.clock + Number(gone),
       state: gone ? null : {
-        user: { name: attachment.account.name.slice(0, 80), color: colors[attachment.clientId % colors.length] },
+        user: { name: attachment.account.name.slice(0, 80), email: attachment.account.email, color: colors[attachment.clientId % colors.length] },
         cursor: attachment.cursor,
       },
     }
   }
-  #broadcast(message: ServerMessage, sender: WebSocket) {
+  #broadcast(message: ServerMessage, sender?: WebSocket) {
     for (const socket of this.ctx.getWebSockets()) {
       if (socket === sender) continue
       const { account } = socket.deserializeAttachment() as Attachment
@@ -212,6 +223,7 @@ export class Contract extends DurableObject<Env> {
         this.#save(state, () => {
           this.ctx.storage.sql.exec('DELETE FROM files')
           this.ctx.storage.sql.exec('DELETE FROM edits')
+          this.ctx.storage.sql.exec('DELETE FROM review_requests')
         }, false)
         this.#draft.destroy()
         this.#draft = new Y.Doc()
@@ -308,6 +320,7 @@ export class Contract extends DurableObject<Env> {
       this.#publish(this.#state!)
       return Response.json(this.#view(this.#state!, account))
     }
+    if (view.role === 'signer' && (action.startsWith('source-') || action.startsWith('negotiated-pdf/'))) throw absent()
     if ((action === 'source-pdf' || action === 'source-download') && state.sourcePdf) {
       const bytes = this.#file('source')
       if (!bytes) throw absent()
@@ -327,10 +340,76 @@ export class Contract extends DurableObject<Env> {
       }
       return Response.json(this.#getTextBlocks().filter(block => block.page === page - 1))
     }
+    if (action === 'review') {
+      if (view.role === 'signer') throw absent()
+      const { requestId, change } = reviewRequest.parse(await readJson(request))
+      const receipt = await this.#receipt(account, requestId, change)
+      if (receipt.saved) return Response.json(view)
+      if (state.status !== 'Draft') throw new HttpError(409, 'This contract is frozen.')
+      let outline = state.outline ?? []
+      let threads = state.threads ?? []
+      let bytes: Uint8Array | undefined
+      let update: Uint8Array | undefined
+      const at = new Date().toISOString()
+      if (change.action === 'outline') {
+        outline = [...outline.filter(item => item.key !== change.key), change]
+        if (outline.length > 500) throw new HttpError(422, 'Outline correction limit reached.')
+      } else {
+        if (state.sourcePdf) throw new HttpError(422, 'Use PDF annotations for this document.')
+        if (change.action === 'add') {
+          if (threads.length >= 120) throw new HttpError(422, 'Review thread limit reached.')
+          reviewPassage(this.#draft, change.anchor)
+          if (change.replacement !== undefined && /[\r\n]/.test(change.anchor.quote + change.replacement)) throw new HttpError(422, 'Select one paragraph for a replacement.')
+          threads = [...threads, { ...change, id: crypto.randomUUID(), author: account.email, createdAt: at, replies: [] }]
+        } else {
+          const thread = threads.find(item => item.id === change.id)
+          if (!thread) throw absent()
+          let next: NativeThread
+          if (change.action === 'reply') {
+            if (thread.decision) throw new HttpError(409, 'Thread is closed.')
+            if (threads.reduce((n, t) => n + t.replies.length, 0) >= 240) throw new HttpError(422, 'Review reply limit reached.')
+            next = { ...thread, replies: [...thread.replies, { id: crypto.randomUUID(), text: change.text, author: account.email, createdAt: at }] }
+          } else {
+            const suggestion = thread.replacement !== undefined
+            if (view.role !== 'owner' && (suggestion || thread.author !== account.email)) throw new HttpError(403, 'You cannot decide this review item.')
+            const reopen = change.decision === 'Reopened'
+            if ((suggestion !== ['Approved', 'Rejected'].includes(change.decision)) || reopen !== !!thread.decision) throw new HttpError(409, 'This review decision is unavailable.')
+            next = { ...thread, decision: change.decision === 'Reopened' ? undefined : { status: change.decision, author: account.email, at } }
+            if (change.decision === 'Approved') {
+              const copy = new Y.Doc()
+              try {
+                Y.applyUpdate(copy, Y.encodeStateAsUpdate(this.#draft))
+                reviewPassage(copy, thread.anchor, thread.replacement)
+                bytes = Y.encodeStateAsUpdate(copy)
+                if (bytes.length > 524_288) throw new HttpError(422, 'Draft size limit reached.')
+                update = Y.encodeStateAsUpdate(copy, Y.encodeStateVector(this.#draft))
+              } finally { copy.destroy() }
+            }
+          }
+          threads = threads.map(item => item.id === next.id ? next : item)
+        }
+      }
+      this.#save({ ...state, threads, outline, revision: state.revision + 1, preview: null }, () => {
+        receipt.commit()
+        if (bytes) this.#writeFile('draft', bytes)
+        this.ctx.storage.sql.exec("DELETE FROM files WHERE id = 'preview'")
+      })
+      if (update) {
+        Y.applyUpdate(this.#draft, update)
+        this.#broadcast({ type: 'edit', id: requestId, revision: state.revision + 1, update: encode(update) })
+      }
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
     if (action === 'annotation') {
       if (!state.sourcePdf || view.role === 'signer') throw absent()
       if (state.status !== 'Draft') throw new HttpError(409, 'This contract is no longer a draft.')
       const change = pdfAnnotationAction.parse(await readJson(request))
+      const receipt = change.action === 'add' && change.requestId ? await this.#receipt(account, change.requestId, change) : undefined
+      if (receipt?.saved) return Response.json(view)
+      if (change.action === 'add' && change.displayedDigest && change.displayedDigest !== (state.negotiatedPdf?.digest ?? state.sourcePdf.digest)) {
+        throw new HttpError(409, 'The PDF changed. Select the passage again.')
+      }
       const annotations = state.annotations ?? []
       const createdAt = new Date().toISOString()
       let next: PdfAnnotation[]
@@ -339,7 +418,7 @@ export class Contract extends DurableObject<Env> {
         if (change.page > state.sourcePdf.pages) throw new HttpError(422, 'Choose a page in this PDF.')
         if (annotations.length >= 60) throw new HttpError(422, 'This contract has reached its annotation limit.')
         const annotation: PdfAnnotation = {
-          id: crypto.randomUUID(), page: change.page, text: change.text, author: account.email, createdAt, replies: [], markup: change.markup,
+          id: crypto.randomUUID(), page: change.page, text: change.text, quote: change.quote, location: change.location, author: account.email, createdAt, replies: [], markup: change.markup,
         }
         if (change.replacement) {
           const page = change.page - 1
@@ -349,6 +428,11 @@ export class Contract extends DurableObject<Env> {
           if (line === undefined || at < 0) throw new HttpError(422, 'The selected line must contain the exact text to replace.')
           if (line.indexOf(expected, at + 1) >= 0) throw new HttpError(422, 'Choose a longer text range that appears once on the selected line.')
           annotation.edit = { page, block, offset: Array.from(line.slice(0, at)).length, expected, replacement }
+          if (annotations.some(item => item.decision?.status === 'Approved' && item.edit?.page === page && item.edit.block === block
+            && item.edit.offset < annotation.edit!.offset + Array.from(expected).length
+            && annotation.edit!.offset < item.edit.offset + Array.from(item.edit.expected).length)) {
+            throw new HttpError(409, 'This source passage already has an approved replacement.')
+          }
           planPdfEdit(this.#getSourcePdf(), annotation.id, annotation.edit)
         }
         next = [...annotations, annotation]
@@ -382,6 +466,7 @@ export class Contract extends DurableObject<Env> {
       }
       const negotiatedPdf = negotiated ? { digest: await sha256(negotiated) } : state.negotiatedPdf
       this.#save({ ...state, annotations: next, negotiatedPdf, revision: state.revision + 1, preview: null }, () => {
+        receipt?.commit()
         if (negotiated) this.#writeFile('negotiated', negotiated)
         this.ctx.storage.sql.exec("DELETE FROM files WHERE id = 'preview'")
       })
@@ -501,6 +586,7 @@ export class Contract extends DurableObject<Env> {
     } else if (action === 'preview') {
       const { revision, signers } = previewContract.parse(await readJson(request))
       if (revision !== state.revision) throw new HttpError(409, 'The draft changed. Review the latest version.')
+      if (state.threads?.some(item => item.replacement !== undefined && !item.decision)) throw new HttpError(409, 'Decide all suggestions before preparing for signature.')
       if (state.annotations?.some(annotation => !annotation.withdrawn && !annotation.decision)) {
         throw new HttpError(409, 'Resolve all PDF annotations before preparing for signature.')
       }

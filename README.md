@@ -10,7 +10,9 @@ Clausid is a self-hosted web application for drafting contracts together and col
 
 ## Workspace workflow
 
-Create a workspace with at least one invitee. Upload an editable PDF to open it as the first contract in Canvas, or continue to an empty Canvas. In **Annotations**, use **Propose a text replacement** to select a source line and specify the text to replace. The service provider approves or rejects each proposal. Canvas displays the negotiated PDF, and signing freezes the reviewed bytes while preserving the original and negotiation history. The rewrite engine supports replacements that fit inside a supported source line.
+Create a workspace with at least one invitee. Upload an editable PDF to open it as the first contract in Canvas, or continue to an empty Canvas. Select wording in the PDF or open **Suggestions** in the right rail and choose a source line. Enter the replacement and submit it. Use **Comments** for page discussions and drawings. The service provider approves or rejects each proposal. Canvas displays the negotiated PDF, and signing freezes the reviewed bytes while preserving the original and negotiation history. The rewrite engine supports replacements that fit inside a supported source line.
+
+Use **Sections** to navigate or correct the document outline and **Index** to find terms and references. In native drafts, select a passage to comment or suggest a replacement. The provider decides suggestions before preparing for signing.
 
 Use **Add document** to start an additional draft. Choose **Export → Share → Share with workspace** to give workspace parties editing access to that draft.
 

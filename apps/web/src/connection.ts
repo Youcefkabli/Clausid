@@ -22,6 +22,7 @@ export function connectContract(
   let retry = 400
   let ready = false
   let writable = false
+  let present = false
   let ended = false
   let error = ''
   const pending = new Map<string, string>()
@@ -31,7 +32,7 @@ export function connectContract(
   }
   let presenceClock = 0
   function presence() {
-    if (!writable) return
+    if (!present) return
     send({ type: 'presence', clientId: doc.clientID, clock: (presenceClock += 2), cursor: awareness.getLocalState()?.cursor ?? null })
   }
   function clearPresence() {
@@ -53,14 +54,15 @@ export function connectContract(
     socket.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as ServerMessage
       if (message.type === 'state') {
+        present = message.contract.status === 'Draft' && message.contract.role !== 'signer'
         writable = message.contract.status === 'Draft' && !message.contract.sourcePdf
         if (message.draft !== undefined) Y.applyUpdate(doc, fromBase64(message.draft), remote)
         if (!ready) {
           ready = true
           retry = 400
+          presence()
           if (writable) {
             for (const [id, update] of pending) send({ type: 'edit', id, update })
-            presence()
           } else if (pending.size) {
             error = 'The contract was frozen before all of your changes were saved.'
           }

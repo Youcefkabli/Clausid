@@ -4,9 +4,10 @@ import { Banner } from '@astryxdesign/core/Banner'
 import { VStack } from '@astryxdesign/core/Stack'
 import { Text } from '@astryxdesign/core/Text'
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden'
-import { useEffect, useRef, useState } from 'react'
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
+import { useContext, useEffect, useRef, useState } from 'react'
+import { getDocument, GlobalWorkerOptions, TextLayer } from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
+import { PdfNavigation, type Passage } from './navigation.ts'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -22,8 +23,39 @@ const styles = stylex.create({
   page: { display: 'block', width: '100%', height: 'auto' },
 })
 
+type PdfTextContent = Awaited<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['getTextContent']>>
+
+// PDF.js can emit separate word and whitespace runs for one PDF text line.
+// Keep DOM offsets and engine baselines in the same line coordinate system.
+function pageLines(content: PdfTextContent, page: number, spans?: HTMLElement[]) {
+  const lines: Passage[] = []
+  let line: Passage | undefined
+  let index = 0
+  for (const run of content.items) {
+    if (!('str' in run)) continue
+    const [x, y] = run.transform.slice(4)
+    if (!line || Math.abs(y - line.y!) > 0.5) {
+      line = { key: page + '/' + index + '/' + x + ',' + y, page, item: index, text: '', x, y }
+      lines.push(line)
+    }
+    const element = spans?.[index]
+    if (element) {
+      element.dataset.pdfItem = String(index)
+      element.dataset.pdfLine = String(line.item)
+      element.dataset.offset = String(line.text.length)
+    }
+    line.text += run.str
+    if (run.hasEOL) line = undefined
+    index++
+  }
+  return lines.filter(row => row.text.trim())
+}
+
 function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocumentProxy; number: number; pageAnchors: boolean; markup?: MarkupControls }) {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const lines = useRef<Passage[]>([])
+  const holder = useRef<HTMLElement>(null)
+  const navigation = useContext(PdfNavigation)
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
@@ -33,6 +65,8 @@ function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocum
     if (!target) return
     let active = true
     let task: RenderTask | undefined
+    let layer: TextLayer | undefined
+    let resize: ResizeObserver | undefined
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry?.isIntersecting) return
       observer.disconnect()
@@ -48,6 +82,16 @@ function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocum
         if (!active) return
         setLoaded(true)
         const content = await page.getTextContent().catch(() => null)
+        const host = holder.current
+        if (active && host && content) {
+          layer = new TextLayer({ container: host, textContentSource: content, viewport: base })
+          const resizeLayer = () => host.style.setProperty('--total-scale-factor', String(target.clientWidth / base.width))
+          resize = new ResizeObserver(resizeLayer)
+          resize.observe(target)
+          resizeLayer()
+          await layer.render()
+          lines.current = pageLines(content, number, layer.textDivs)
+        }
         if (active && content) setText(content.items.map((item) => 'str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : '').join(''))
       }).catch(() => { if (active) setFailed(true) })
     }, { rootMargin: '400px' })
@@ -55,13 +99,31 @@ function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocum
     return () => {
       active = false
       observer.disconnect()
+      resize?.disconnect()
+      layer?.cancel()
       task?.cancel()
     }
   }, [document, number])
 
+  function capture() {
+    const selection = window.getSelection()
+    if (!navigation || !markup?.writable || markup.tool !== 'select' || !selection?.rangeCount || selection.isCollapsed) return
+    const range = selection.getRangeAt(0)
+    const quote = selection.toString().trim()
+    if (!quote || !holder.current?.contains(range.commonAncestorContainer)) return
+    const start = range.startContainer.parentElement?.closest<HTMLElement>('[data-pdf-line]')
+    const end = range.endContainer.parentElement?.closest<HTMLElement>('[data-pdf-line]')
+    const line = lines.current.find(row => row.item === Number(start?.dataset.pdfLine))
+    const singleLine = !!start && start.dataset.pdfLine === end?.dataset.pdfLine && !!line
+    const run = singleLine ? {text: line.text, x: line.x!, y: line.y!} : undefined
+    navigation.select({ page: number, quote, singleLine, digest: navigation.digest, run,
+      offset: Number(start?.dataset.offset ?? 0) + range.startOffset + selection.toString().indexOf(quote) })
+  }
   return <VStack xstyle={styles.sheet} id={pageAnchors ? 'contract-pdf-page-' + number : undefined} role="group" aria-label={`PDF page ${number}`} aria-busy={!loaded && !failed}>
     {failed ? <Banner status="error" title={`Page ${number} could not be displayed.`} />
       : <canvas {...stylex.props(styles.page)} ref={canvas} width={612} height={792} role="img" aria-label={`Page ${number}`} />}
+    <section aria-label={`Selectable text on page ${number}`} ref={holder} className="pdf-text-layer"
+      onPointerUp={capture} onKeyUp={capture} />
     {loaded && markup && <PdfMarkupLayer page={number} controls={markup} />}
     {text && <VisuallyHidden as="p">{text}</VisuallyHidden>}
   </VStack>
@@ -78,6 +140,40 @@ export default function FrozenPdf({ url, label = 'Frozen contract PDF', pageAnch
     }).catch(() => { if (active) setFailed(true) })
     return () => { active = false; void task.destroy().catch(() => undefined) }
   }, [url])
+
+  const load = useContext(PdfNavigation)?.load
+  useEffect(() => {
+    if (!document || !load || !pageAnchors) return
+    let active = true
+    async function read(pdf: PDFDocumentProxy) {
+      const passages: Passage[] = []
+      for (let page = 1; page <= pdf.numPages && active; page++) {
+        passages.push({ key: 'page-' + page, page, text: 'Page ' + page })
+        const sheet = await pdf.getPage(page)
+        const content = await sheet.getTextContent()
+        passages.push(...pageLines(content, page))
+      }
+      const tree = await pdf.getOutline().catch(() => null)
+      async function bookmarks(items: NonNullable<typeof tree>, level: number) {
+        for (const entry of items) {
+          if (!active) return
+          const dest = typeof entry.dest === 'string' ? await pdf.getDestination(entry.dest) : entry.dest
+          if (dest) {
+            const index = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]).catch(() => -1)
+            if (index >= 0 && index < pdf.numPages) passages.push({ key: 'bookmark/' + index + '/' + entry.title.slice(0, 160),
+              page: index + 1, text: entry.title, level, bookmark: true })
+          }
+          await bookmarks(entry.items, level + 1)
+        }
+      }
+      if (tree) await bookmarks(tree, 1)
+      if (active) load!(passages)
+    }
+    void read(document).catch(() => {
+      if (active) load(Array.from({length: document.numPages}, (_, i) => ({key: 'page-' + (i + 1), page: i + 1, text: 'Page ' + (i + 1)})))
+    })
+    return () => { active = false }
+  }, [document, load, pageAnchors])
 
   if (failed) return <Banner status="error" title="Could not display the frozen PDF."
     description="Use Export to open the PDF in a new tab." />

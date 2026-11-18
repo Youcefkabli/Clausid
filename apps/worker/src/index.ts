@@ -442,7 +442,7 @@ async function route(request: Request, env: Env) {
     await register(requestId, { copy: id })
     return actor(env, requestId, account, 'create-copy', json({ title, draft }))
   }
-  if (method === 'POST' && (/^(assign|invite|preview|freeze|sign|void|annotation)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
+  if (method === 'POST' && (/^(assign|invite|preview|freeze|sign|void|annotation|review)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
     return actor(env, id, account, action, json(await readJson(request)))
   }
   throw new HttpError(404, 'Page unavailable.')

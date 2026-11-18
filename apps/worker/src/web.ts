@@ -2,7 +2,7 @@ import type { Env } from './http.ts'
 
 const mimeTypes = new Map([
   ['html', 'text/html; charset=utf-8'], ['css', 'text/css; charset=utf-8'],
-  ['js', 'text/javascript; charset=utf-8'], ['json', 'application/json'],
+  ['js', 'text/javascript; charset=utf-8'], ['mjs', 'text/javascript; charset=utf-8'], ['json', 'application/json'],
   ['svg', 'image/svg+xml'], ['png', 'image/png'], ['webp', 'image/webp'],
   ['wasm', 'application/wasm'], ['ico', 'image/x-icon'], ['woff', 'font/woff'], ['woff2', 'font/woff2'],
 ])

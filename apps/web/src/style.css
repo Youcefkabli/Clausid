@@ -99,11 +99,39 @@ iframe {
 }
 
 .canvas-contract-text {
-  padding: 72px;
+  padding: clamp(var(--spacing-4), 5vw, var(--spacing-10));
 }
 
 .canvas-contract-text .tiptap,
 .canvas-contract-text .tiptap :where(p, li, blockquote) {
-  font-size: 32px;
+  font-size: 1.125rem;
   line-height: 1.5;
 }
+
+/* PDF.js TextLayer supplies the glyph positions and transforms. Its viewport
+   shares the page canvas's CSS width, including the containing artboard zoom. */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+}
+.pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  user-select: text;
+  transform-origin: 0 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1)) scale(calc(1 / var(--min-font-size)));
+}
+.pdf-text-layer ::selection { background: Highlight; color: HighlightText; }
