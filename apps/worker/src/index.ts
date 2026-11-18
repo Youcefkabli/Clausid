@@ -1,10 +1,12 @@
 import { DurableObject } from 'cloudflare:workers'
 import { PDFDocument } from 'pdf-lib'
+import { inspectPdf } from './pdf-rewrite.ts'
 import { createContract, createWorkspace, identifier, redeemInvite, setupWorkspace, titleInput, workspaceDocument, workspaceDocumentLimit } from '@clausid/contracts'
 import type { ContractView, Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
 import { deliverSetupInvitations, workspaceSharing } from './workspace-sharing.ts'
+import { securityHeaders, servesApplication, serveApplication } from './web.ts'
+import { authorizedOperation, snapshotObject } from './operations.ts'
 import { Contract } from './contract.ts'
-import { inspectPdf } from './pdf-rewrite.ts'
 import { decode, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import type { Account, Env } from './http.ts'
 
@@ -24,10 +26,15 @@ export class Directory extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_slugs (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_projects (id TEXT PRIMARY KEY, project TEXT NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_requests (request_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL UNIQUE, ready INTEGER NOT NULL CHECK (ready IN (0, 1)))')
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_documents (id TEXT PRIMARY KEY, data BLOB NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_contracts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)')
   }
   alarm() { return deliverSetupInvitations(this.ctx, this.env) }
   fetch(request: Request) {
+    if (new URL(request.url).pathname.startsWith('/ops/')) {
+      return authorizedOperation(request, this.env)
+        ? snapshotObject(this.ctx, 'directory', request) : new Response(null, { status: 404 })
+    }
     return safeResponse(async () => {
       const path = new URL(request.url).pathname
       const sql = this.ctx.storage.sql
@@ -140,8 +147,8 @@ export class Directory extends DurableObject<Env> {
         })
         return new Response(null, { status: 204 })
       }
-      return Response.json(sql.exec<{ id: string; workspaceId: string | null }>(
-        'SELECT contracts.id, workspace_contracts.workspace_id AS workspaceId FROM contracts LEFT JOIN workspace_contracts USING (id) ORDER BY contracts.created DESC').toArray())
+      return Response.json(sql.exec<{ id: string; workspaceId: string | null; createdAt: number }>(
+        'SELECT contracts.id, workspace_contracts.workspace_id AS workspaceId, contracts.created AS createdAt FROM contracts LEFT JOIN workspace_contracts USING (id) ORDER BY contracts.created DESC').toArray())
     })
   }
 }
@@ -229,7 +236,7 @@ async function route(request: Request, env: Env) {
       return Response.json(result)
     }
     if (method === 'POST') {
-      const { document, team = [], ...input } = setupWorkspace.parse(await readJson(request, workspaceDocumentRequestLimit))
+      const { document, team, ...input } = setupWorkspace.parse(await readJson(request, workspaceDocumentRequestLimit))
       if (team.includes(account.email)) throw new HttpError(422, 'Invite someone other than yourself.')
       const source = document && await readPdfUpload(document.data)
       const reservation = await directory.fetch('https://directory/workspaces', json(input))
@@ -271,12 +278,36 @@ async function route(request: Request, env: Env) {
     }
     return sharing(id, 'parties')
   }
-  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem|customize|delete)$/)
+  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem|customize|delete|document|duplicate)$/)
   if (workspaceAction) {
     const id = identifier.parse(workspaceAction[1])
     const action = workspaceAction[2]
     if (action === 'redeem' && method === 'POST') return sharing(id, action, json(await readJson(request)))
     if (action === 'parties' && method === 'GET') return parties(id)
+    if (action === 'duplicate' && method === 'POST') {
+      if (!await isServiceProvider(id)) throw providerRequired()
+      const { requestId, name, description, project } = createWorkspace.parse(await readJson(request))
+      const reservation = await directory.fetch('https://directory/workspaces', json({ requestId, name, description, project }))
+      if (!reservation.ok) return reservation
+      const { workspace, pending } = await reservation.json<{ workspace: Workspace; pending: boolean }>()
+      if (pending) {
+        const initialized = await sharing(workspace.id, 'initialize', json(workspace))
+        if (!initialized.ok) return initialized
+        const ready = await directory.fetch('https://directory/workspace-ready/' + workspace.id, { method: 'POST' })
+        if (!ready.ok) return ready
+      }
+      return Response.json(workspace, { status: 201 })
+    }
+    if (action === 'document' && method === 'GET') {
+      if (!await isServiceProvider(id)) throw providerRequired()
+      const details = await sharing(id, 'details')
+      if (!details.ok) return details
+      const workspace = await details.json<Workspace>()
+      if (workspace.firstContractId) {
+        return actor(env, workspace.firstContractId, account, 'source-download')
+      }
+      return sharing(id, 'document')
+    }
     if (action === 'delete' && method === 'POST') {
       if (!await isServiceProvider(id)) throw providerRequired()
       const initialized = await parties(id)
@@ -324,7 +355,7 @@ async function route(request: Request, env: Env) {
     if (method === 'GET') {
       const response = await directory.fetch('https://directory/')
       if (!response.ok) throw new HttpError(503, 'Contract directory is temporarily unavailable.')
-      const entries = await response.json<{ id: string; workspaceId: string | null }[]>()
+      const entries = await response.json<{ id: string; workspaceId: string | null; createdAt: number }[]>()
       const summaries: Summary[] = []
       for (let index = 0; index < entries.length; index += 12) {
         const batch = entries.slice(index, index + 12)
@@ -332,8 +363,14 @@ async function route(request: Request, env: Env) {
         for (const [offset, view] of views.entries()) {
           if (view.status === 404) continue
           if (!view.ok) throw new HttpError(503, 'A contract could not be loaded.')
-          const { id, title, role, status, hasSignatures } = await view.json<ContractView>()
-          summaries.push({ id, title, role, status, hasSignatures, workspaceId: batch[offset].workspaceId ?? undefined })
+          const { id, title, role, status, owner, assignee, team, createdAt, updatedAt, hasSignatures } = await view.json<ContractView>()
+          const directoryEntry = batch[offset]
+          summaries.push({
+            id, title, role, status, owner, assignee, team, hasSignatures,
+            updatedAt: updatedAt ?? createdAt ?? (role === 'owner' ? directoryEntry.createdAt : undefined),
+            createdAt: createdAt ?? (role === 'owner' ? directoryEntry.createdAt : undefined),
+            workspaceId: directoryEntry.workspaceId ?? undefined,
+          })
         }
       }
       return Response.json(summaries)
@@ -383,7 +420,7 @@ async function route(request: Request, env: Env) {
     if (entry && !await isServiceProvider(entry.workspaceId)) throw providerRequired()
     return actor(env, id, account, 'delete', json({ workspaceId: entry?.workspaceId }))
   }
-  if (method === 'POST' && /^(invite|preview|freeze|duplicate|revoke\/[^/]+)$/.test(action)) {
+  if (method === 'POST' && /^(assign|invite|preview|freeze|duplicate|revoke\/[^/]+)$/.test(action)) {
     const entry = await contractWorkspace()
     if (entry && !await isServiceProvider(entry.workspaceId)) throw providerRequired()
   }
@@ -405,7 +442,7 @@ async function route(request: Request, env: Env) {
     await register(requestId, { copy: id })
     return actor(env, requestId, account, 'create-copy', json({ title, draft }))
   }
-  if (method === 'POST' && (/^(invite|preview|freeze|sign|void|annotation)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
+  if (method === 'POST' && (/^(assign|invite|preview|freeze|sign|void|annotation)$/.test(action) || /^revoke\/[\w-]+$/.test(action))) {
     return actor(env, id, account, action, json(await readJson(request)))
   }
   throw new HttpError(404, 'Page unavailable.')
@@ -413,12 +450,11 @@ async function route(request: Request, env: Env) {
 
 export default {
   async fetch(request: Request, env: Env) {
+    if (servesApplication(request)) return serveApplication(request, env)
     const response = await safeResponse(() => route(request, env))
     if (response.status !== 101) {
-      const headers = new Headers(response.headers)
+      const headers = securityHeaders(env.PUBLIC_ORIGIN, new Headers(response.headers))
       headers.set('Cache-Control', 'private, no-store')
-      headers.set('Referrer-Policy', 'no-referrer')
-      headers.set('X-Content-Type-Options', 'nosniff')
       return new Response(response.body, { status: response.status, headers })
     }
     return response

@@ -1,8 +1,10 @@
+import { workspaceFixture } from './workspace-fixture.ts'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import * as Y from 'yjs'
@@ -114,6 +116,14 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
       return { versionId: previewId, digest, name: 'Restore Tester', consent: true, consentVersion }
     }
 
+    const workspaceRequest = { name: 'Workspace to resume', requestId: crypto.randomUUID(), ...workspaceFixture() }
+    const workspaceResponse = await request.post('/api/workspaces', { data: workspaceRequest })
+    expect(workspaceResponse.status()).toBe(201)
+    const reservedAfterInitialization = (await workspaceResponse.json()).id
+    const beforeInitializationRequest = { name: 'Workspace to initialize', requestId: crypto.randomUUID(), ...workspaceFixture() }
+    const reservedBeforeInitialization = crypto.randomUUID()
+    const legacyId = crypto.randomUUID()
+
     const draft = await makeDraft('Restored draft')
     const signed = await makeDraft('Restored signed contract')
     const signature = await prepare(signed)
@@ -139,10 +149,43 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
     await expect(fetch(origin + '/healthz')).rejects.toThrow()
     data = join(root, 'restored')
     await cp(join(root, 'source'), data, { recursive: true })
+    const accountNamespace = join(directory(), 'clausid-directory-db-v1')
+    let seeded = false
+    for (const file of await readdir(accountNamespace)) {
+      if (!/^[a-f0-9]{64}\.sqlite$/.test(file)) continue
+      const db = new DatabaseSync(join(accountNamespace, file))
+      try {
+        const pending = db.prepare('SELECT 1 FROM workspace_requests WHERE request_id = ?').get(workspaceRequest.requestId)
+        if (!pending) continue
+        // Simulate interrupted creation on either side of sharing initialization.
+        db.prepare('UPDATE workspace_requests SET ready = 0 WHERE request_id = ?').run(workspaceRequest.requestId)
+        const insert = db.prepare('INSERT INTO workspaces VALUES (?, ?, ?, ?)')
+        insert.run(reservedBeforeInitialization, beforeInitializationRequest.name, '', Date.now())
+        db.prepare('INSERT INTO workspace_requests VALUES (?, ?, 0)').run(beforeInitializationRequest.requestId, reservedBeforeInitialization)
+        insert.run(legacyId, 'Legacy workspace', '', Date.now())
+        seeded = true
+        break
+      } finally {
+        db.close()
+      }
+    }
+    expect(seeded).toBe(true)
     auth = startAuth()
     worker = startWorker()
     children.push(auth, worker)
     await waitForServices()
+    const listing = await (await request.get('/api/workspaces')).json()
+    expect(listing).toEqual([expect.objectContaining({ id: legacyId })])
+    for (const [input, reserved] of [
+      [workspaceRequest, reservedAfterInitialization],
+      [beforeInitializationRequest, reservedBeforeInitialization],
+    ] as const) {
+      const response = await request.post('/api/workspaces', { data: input })
+      expect(response.status()).toBe(201)
+      expect((await response.json()).id).toBe(reserved)
+      expect((await request.get('/api/workspaces/' + reserved + '/parties')).status()).toBe(200)
+    }
+    expect((await request.get('/api/workspaces/' + legacyId + '/parties')).status()).toBe(200)
     await expect.poll(async () => (await request.get(draft.path)).status()).toBe(200)
     const [restoredDraft] = await socket(draft.id)
     expect(restoredDraft).toMatchObject({ type: 'state', contract: { revision: 1, status: 'Draft' } })

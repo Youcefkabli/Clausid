@@ -14,6 +14,7 @@ import type {Awareness} from 'y-protocols/awareness';
 import {Card} from '@astryxdesign/core/Card';
 import {Center} from '@astryxdesign/core/Center';
 import {Divider} from '@astryxdesign/core/Divider';
+import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -1543,6 +1544,16 @@ function CanvasDocumentTab({title, compact, onSelect}: {
         isActive onSelect={onSelect} onClose={() => location.assign('/')} />
     </HStack>
   );
+}
+
+export function EmptyCanvas({ member }: { member: boolean }) {
+  return <Section variant="muted" height="100%" padding={4} role="region" aria-label="Canvas">
+    <Center height="100%">
+      <EmptyState title="No contracts yet" description={member
+        ? 'Contracts appear here when the service provider shares them.'
+        : 'Use Add document to start a contract.'} />
+    </Center>
+  </Section>;
 }
 
 type LiveDocument = {

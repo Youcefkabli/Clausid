@@ -8,3 +8,6 @@
 test-results
 playwright-report
 packages/pdf-engine/target
+
+packages/ops/target
+.wrangler

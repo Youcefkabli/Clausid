@@ -7,8 +7,8 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
 import { Layout, LayoutContent, LayoutHeader, HStack, VStack } from '@astryxdesign/core/Layout'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { Banner } from '@astryxdesign/core/Banner'
-import { FileInput } from '@astryxdesign/core/FileInput'
 import { Card } from '@astryxdesign/core/Card'
+import { FileInput } from '@astryxdesign/core/FileInput'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
@@ -26,7 +26,7 @@ import { api, ApiError, authClient, errorMessage, workspaceApi, workspaceAction 
 import { openStore, project, useProjection } from './store.ts'
 import type { AppStore } from './store.ts'
 import { ContractPage } from './contract-page.tsx'
-import type { CanvasHeader } from './app/canvas-editor/page.tsx'
+import { EmptyCanvas, type CanvasHeader } from './app/canvas-editor/page.tsx'
 import '@astryxdesign/core/reset.css'
 import '@astryxdesign/core/astryx.css'
 import '@astryxdesign/theme-neutral/fonts.css'
@@ -40,6 +40,7 @@ const inviteMatch = location.pathname.match(/^\/(invite|workspace-invite)\/([\w-
 const isWorkspaceInvite = inviteMatch?.[1] === 'workspace-invite'
 const contractMatch = location.pathname.match(/^\/contracts\/([\w-]+)$/)
 const isWorkspaceWizard = location.pathname === '/workspaces/new'
+const editWorkspaceId = location.pathname.match(/^\/workspaces\/([\w-]+)\/edit\/?$/)?.[1]
 const query = new URLSearchParams(location.search)
 const selectedWorkspaceId = query.get('workspace')
 const selectedWorkspaceSlug = query.get('workspaceSlug')
@@ -63,7 +64,7 @@ function Frame({ account, children, editorHeader, fillViewport = false }: {
   return <AppShell
     topNav={<TopNav heading={<TopNavHeading heading="Clausid" headingHref="/" />}
       startContent={editorHeader?.start}
-      endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} compact={editorHeader?.compact} />}</>} />}
+      endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} />}</>} />}
     contentPadding={0}
   >{editorHeader || fillViewport ? children : <div className="page-content">{children}</div>}</AppShell>
 }
@@ -95,6 +96,8 @@ function Dashboard({ store }: { store: AppStore }) {
   const row = useProjection(store, 'dashboard')
   const contracts = row ? JSON.parse(row.value) as Summary[] : null
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
+  const refreshContracts = () => setRefreshVersion(version => version + 1)
   const selectedWorkspace = workspaces?.find(({ id, slug, role }) =>
     selectedWorkspaceSlug !== null ? slug === selectedWorkspaceSlug && role !== 'member' : id === selectedWorkspaceId)
   const workspaceIds = new Set(workspaces?.map(({ id }) => id))
@@ -150,7 +153,7 @@ function Dashboard({ store }: { store: AppStore }) {
     }
     void refresh()
     return () => { abort.abort(); clearTimeout(timer) }
-  }, [store])
+  }, [store, refreshVersion])
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (selectedWorkspace?.role !== 'owner') return
@@ -173,7 +176,7 @@ function Dashboard({ store }: { store: AppStore }) {
   }
   if (workspaceLanding) return <WorkspacesTable workspaces={workspaces}
     contractsByWorkspace={contracts === null ? null : contractsByWorkspace}
-    otherContracts={otherContracts} workspaceHref={workspaceHref} error={error}
+    otherContracts={otherContracts} workspaceHref={workspaceHref} error={error} onContractSaved={refreshContracts}
     onWorkspaceSaved={(saved) => setWorkspaces(previous => {
       if (!previous) return [saved]
       return previous.some(item => item.id === saved.id)
@@ -183,6 +186,7 @@ function Dashboard({ store }: { store: AppStore }) {
     onWorkspaceDeleted={(id) => setWorkspaces(previous => previous?.filter(item => item.id !== id) ?? null)} />
 
   // Astryx CLI 0.7.16, table template, using the live contract projection.
+  const empty = selectedWorkspace && visibleContracts?.length === 0
   return <>
     <Layout height="fill" header={<LayoutHeader hasDivider padding={4}>
       <HStack vAlign="center" hAlign="between" wrap="wrap" gap={3}>
@@ -193,24 +197,23 @@ function Dashboard({ store }: { store: AppStore }) {
         </VStack>
         <HStack gap={2} wrap="wrap" vAlign="center">
           <Button label="Workspaces" href="/" />
-          {selectedWorkspace?.role === 'owner' && selectedWorkspace.firstContractId && selectedWorkspace.documentName &&
-            <Button label={'Download ' + selectedWorkspace.documentName} href={'/api/contracts/' + selectedWorkspace.firstContractId + '/source-download'} />}
+          {selectedWorkspace?.role === 'owner' && selectedWorkspace.documentName &&
+            <Button label={'Download ' + selectedWorkspace.documentName} href={'/api/workspaces/' + selectedWorkspace.id + '/document'} />}
           {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
           {selectedWorkspace?.role === 'owner' && <Button label="Add document" variant="primary"
             onClick={() => changeCreateOpen(true)} />}
         </HStack>
       </HStack>
-    </LayoutHeader>} content={<LayoutContent>
-      <VStack gap={5}>
+    </LayoutHeader>} content={<LayoutContent padding={empty ? 0 : undefined}>
+      {empty ? <>
+        {error && <Banner status="error" title={error} role="alert" />}
+        <EmptyCanvas member={selectedWorkspace.role === 'member'} />
+      </> : <VStack gap={5}>
         {error && <Banner status="error" title={error} role="alert" />}
         {workspaces && !selectedWorkspace ? <EmptyState title="Workspace unavailable" />
           : visibleContracts === null ? <Text role="status">Loading contracts…</Text>
-          : visibleContracts.length === 0 ? <EmptyState title="No contracts yet"
-            description={selectedWorkspace?.role === 'member' ? 'Contracts appear here when the service provider shares them.'
-              : 'Create the first contract in this workspace.'} />
-          : <WorkspaceContractsTable contracts={visibleContracts} canManage={selectedWorkspace?.role === 'owner'}
-              onDeleted={id => project(store, 'dashboard', (contracts ?? []).filter(contract => contract.id !== id))} />}
-      </VStack>
+          : <WorkspaceContractsTable contracts={visibleContracts} canManage={selectedWorkspace?.role === 'owner'} onSaved={refreshContracts} />}
+      </VStack>}
     </LayoutContent>} />
     <Dialog isOpen={createOpen} onOpenChange={changeCreateOpen} purpose="form">
       <Layout header={<DialogHeader title="Add document" onOpenChange={changeCreateOpen} />} content={<LayoutContent>
@@ -256,14 +259,40 @@ function StoreGate({ account }: { account: { name: string; email: string } }) {
   </Frame>
 }
 
+function EditWorkspace({ id }: { id: string }) {
+  const [workspace, setWorkspace] = useState<Workspace | null>()
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const controller = new AbortController()
+    void workspaceApi<Workspace[]>(undefined, controller.signal).then(workspaces => {
+      if (!controller.signal.aborted) {
+        setWorkspace(workspaces.find(item => item.id === id && item.role === 'owner') ?? null)
+      }
+    }).catch(reason => {
+      if (!controller.signal.aborted) setError(errorMessage(reason))
+    })
+    return () => controller.abort()
+  }, [id])
+  if (workspace) return <WorkspaceWizard workspace={workspace} />
+  if (error) return <Banner status="error" title={error} role="alert" />
+  if (workspace === null) return <EmptyState title="Workspace unavailable" actions={<Button label="Workspaces" href="/" />} />
+  return <Text role="status">Loading workspace…</Text>
+}
+
 function App() {
   const session = authClient.useSession()
+  if (location.pathname === '/reset-password') return <LoginCard invitation={false} />
   if (session.isPending && !session.isRefetching) return <Frame><p role="status">Checking your session…</p></Frame>
+  if (session.error && !session.data) return <Frame>
+    <Banner status="error" title="Could not check your session." />
+    <Button label="Retry" onClick={() => void session.refetch()} />
+  </Frame>
   if (!session.data?.user.emailVerified) return <LoginCard invitation={Boolean(inviteMatch)} />
   if (inviteMatch && inviteKey) return <Frame account={session.data.user}>
     <Invitation id={inviteMatch[2]} inviteKey={inviteKey} />
   </Frame>
+  if (editWorkspaceId) return <Frame account={session.data.user}><EditWorkspace key={session.data.user.id + ':' + editWorkspaceId} id={editWorkspaceId} /></Frame>
   if (isWorkspaceWizard) return <Frame account={session.data.user}><WorkspaceWizard /></Frame>
-  return <StoreGate account={session.data.user} />
+  return <StoreGate key={session.data.user.id} account={session.data.user} />
 }
 createRoot(document.getElementById('root')!).render(<Theme theme={neutralTheme}><App /></Theme>)

@@ -4,7 +4,7 @@
   "name": "@clausid/worker",
   "scripts": {
     "build": "node build.mjs",
-    "start": "workerd serve ../../deploy/workerd.capnp --external-addr auth=127.0.0.1:8788 --directory-path contractDisk=../../.data/contracts"
+    "start": "workerd serve ../../deploy/workerd.capnp --external-addr auth=127.0.0.1:8788 --directory-path contractDisk=../../.data/contracts --directory-path webDisk=../web/dist"
   },
   "dependencies": {
     "@clausid/contracts": "workspace:*",

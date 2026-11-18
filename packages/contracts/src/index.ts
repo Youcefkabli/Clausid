@@ -21,7 +21,7 @@ export const createWorkspace = z.object({
 })
 export const setupWorkspace = createWorkspace.extend({
   document: workspaceDocument.optional(),
-  team: z.array(emailAddress).max(39).transform(emails => [...new Set(emails)]).optional(),
+  team: z.array(emailAddress).min(1).max(39).transform(emails => [...new Set(emails)]),
 })
 export const workspaceStatuses = ['Draft', 'Review', 'Negotiation', 'Signature', 'Active', 'Expiring', 'On hold', 'Closed', 'Completed'] as const
 export const customizeWorkspace = z.object({
@@ -34,9 +34,8 @@ export const customizeWorkspace = z.object({
 }).partial().refine((fields) => Object.keys(fields).length > 0, 'Change at least one workspace setting.')
 export type Workspace = {
   id: string; name: string; description: string; slug?: string | null; role?: 'owner' | 'member'
-  project?: string | null; createdAt?: number; updatedAt?: number; status?: typeof workspaceStatuses[number]
+  documentName?: string | null; firstContractId?: string | null; project?: string | null; createdAt?: number; updatedAt?: number; status?: typeof workspaceStatuses[number]
   assignee?: { id: string; email: string }; labels?: string[]
-  firstContractId?: string | null; documentName?: string | null
 }
 
 export type WorkspaceParties = {
@@ -70,7 +69,13 @@ export const clientMessage = z.discriminatedUnion('type', [
 
 export type Status = 'Draft' | 'Awaiting signatures' | 'Signed' | 'Voided'
 export type Role = 'owner' | 'editor' | 'signer'
-export type Summary = { id: string; title: string; status: Status; role: Role; workspaceId?: string; hasSignatures?: boolean }
+export type ContractParty = { id: string; email: string }
+export type Summary = {
+  id: string; title: string; status: Status; role: Role; workspaceId?: string
+  owner?: ContractParty; assignee?: ContractParty; team?: ContractParty[]
+  createdAt?: number; updatedAt?: number; hasSignatures?: boolean
+}
+export const assignContract = z.object({ assigneeId: z.string().min(1).max(100).nullable() })
 export type Signature = {
   versionId: string
   digest: string
@@ -102,10 +107,10 @@ export type PdfAnnotation = {
   decision?: { status: 'Approved' | 'Rejected'; author: string; at: string }
 }
 export type ContractView = Summary & {
+  revision: number
   sourcePdf?: { name: string; pages: number }
   negotiatedPdf?: { digest: string }
   annotations?: PdfAnnotation[]
-  revision: number
   editors: { id: string; email: string }[]
   invites: { id: string; email: string }[]
   version: { id: string; digest: string; canSign: boolean; signers: { email: string; signedAt: string | null }[] } | null

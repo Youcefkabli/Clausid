@@ -6,9 +6,11 @@ import { loadEnvFile } from 'node:process'
 
 if (existsSync('.env')) loadEnvFile('.env')
 const storage = resolve(process.env.CLAUSID_DATA_DIR ?? '.data')
+const vitePort = process.env.CLAUSID_VITE_PORT ?? '5173'
+const workerPort = process.env.CLAUSID_HTTP_PORT ?? '8787'
 const env = {
   ...process.env,
-  PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN ?? 'http://127.0.0.1:5173',
+  PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${vitePort}`,
   AUTH_DB_PATH: resolve(storage, 'auth', 'auth.sqlite'),
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? randomBytes(32).toString('hex'),
   INTERNAL_AUTH_KEY: process.env.INTERNAL_AUTH_KEY ?? randomBytes(32).toString('hex'),
@@ -40,6 +42,6 @@ process.on('SIGINT', () => stop(0))
 process.on('SIGTERM', () => stop(0))
 
 start(process.execPath, ['src/server.ts'], { cwd: 'apps/auth' })
-start('apps/worker/node_modules/workerd/bin/workerd', ['serve', 'deploy/workerd.capnp', '--external-addr',
+start('apps/worker/node_modules/workerd/bin/workerd', ['serve', 'deploy/workerd.capnp', '--socket-addr', `http=127.0.0.1:${workerPort}`, '--external-addr',
   `auth=127.0.0.1:${env.AUTH_PORT ?? 8788}`, '--directory-path', 'contractDisk=' + resolve(storage, 'contracts')])
 start('pnpm', ['--filter', '@clausid/web', 'dev'])

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Avatar } from '@astryxdesign/core/Avatar'
+import { AvatarGroup, AvatarGroupOverflow } from '@astryxdesign/core/AvatarGroup'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -29,9 +30,9 @@ import { useMediaQuery } from '@astryxdesign/core/hooks'
 import { X } from 'lucide-react'
 import { ArrowRightIcon, DocumentDuplicateIcon, EllipsisHorizontalIcon, PencilIcon, TagIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
 import { rtlStyles } from '@astryxdesign/core/utils'
-import type { Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
+import type { ContractParty, Summary, Workspace, WorkspaceParties } from '@clausid/contracts'
 import { workspaceProject, workspaceStatuses } from '@clausid/contracts'
-import { api, workspaceAction, workspaceApi, errorMessage } from '../../api.ts'
+import { api, workspaceAction, errorMessage } from '../../api.ts'
 import { statusVariant } from '../../status.ts'
 
 const contractRole: Record<Summary['role'], string> = { owner: 'Owner', editor: 'Collaborator', signer: 'Signer' }
@@ -74,8 +75,64 @@ export const contractColumns: TableColumn<Summary>[] = [
   { key: 'role', header: 'Role', width: proportional(1), renderCell: ({ role }) => <Text color="secondary">{contractRole[role]}</Text> },
 ]
 
+function ContractPerson({ person }: { person?: ContractParty }) {
+  return person ? <Text>{person.email}</Text> : <Text color="secondary">—</Text>
+}
+
+function ContractTeam({ team }: { team?: ContractParty[] }) {
+  if (!team?.length) return <Text color="secondary">—</Text>
+  return <HStack role="group" aria-label={'Team: ' + team.map(member => member.email).join(', ')}>
+    <AvatarGroup size="xsm">
+      {team.slice(0, 3).map(member => <Avatar key={member.id} name={member.email} />)}
+      {team.length > 3 && <Popover placement="below" label="Contract team" content={
+        <VStack gap={1}>{team.map(member => <Text key={member.id}>{member.email}</Text>)}</VStack>
+      }><AvatarGroupOverflow count={team.length - 3} /></Popover>}
+    </AvatarGroup>
+  </HStack>
+}
+
+function AssignContract({ contract, close, onSaved }: {
+  contract: Summary; close: () => void; onSaved: () => void
+}) {
+  const [assignee, setAssignee] = useState(contract.assignee?.id ?? 'unassigned')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const changeOpen = (open: boolean) => { if (!open && !saving) close() }
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (saving) return
+    setSaving(true)
+    setError('')
+    try {
+      await api('/' + contract.id + '/assign', { assigneeId: assignee === 'unassigned' ? null : assignee })
+      onSaved()
+      close()
+    } catch (reason) {
+      setError(errorMessage(reason))
+      setSaving(false)
+    }
+  }
+  return <Dialog isOpen onOpenChange={changeOpen} purpose="form">
+    <Layout header={<DialogHeader title="Assign contract" onOpenChange={changeOpen} />}
+      content={<LayoutContent padding={4}>
+        <form onSubmit={save}>
+          <VStack gap={3}>
+            <Selector label="Assigned to" value={assignee} onChange={setAssignee} isDisabled={saving}
+              options={[{ value: 'unassigned', label: 'Unassigned' },
+                ...(contract.team ?? []).map(member => ({ value: member.id, label: member.email }))]} />
+            {error && <Banner status="error" title={error} role="alert" />}
+            <HStack gap={2}>
+              <Button label="Cancel" onClick={close} isDisabled={saving} />
+              <Button label="Save changes" type="submit" variant="primary" isLoading={saving} />
+            </HStack>
+          </VStack>
+        </form>
+      </LayoutContent>} />
+  </Dialog>
+}
+
 function ContractActions({ contract, canManage, onSaved }: { contract: Summary; canManage: boolean; onSaved: () => void }) {
-  const [confirming, setConfirming] = useState(false)
+  const [action, setAction] = useState<'assign' | 'delete'>()
   const owner = canManage && contract.role === 'owner'
   const locked = contract.hasSignatures || contract.status === 'Signed'
   return <>
@@ -85,32 +142,124 @@ function ContractActions({ contract, canManage, onSaved }: { contract: Summary; 
       hasChevron={false} alignment="end"
       items={[
         { label: 'Open in Canvas', onClick: () => location.assign('/contracts/' + contract.id) },
+        ...(owner && contract.team?.length
+          ? [{ label: 'Assign to…', icon: UserIcon, onClick: () => setAction('assign') }] : []),
         ...(owner ? [
           { type: 'divider' as const },
           { label: 'Delete contract', icon: TrashIcon, variant: 'destructive' as const, isDisabled: locked,
             description: locked ? 'A signature has been recorded.' : undefined,
-            onClick: () => setConfirming(true) },
+            onClick: () => setAction('delete') },
         ] : []),
       ]}
     />
-    {confirming && <DeleteConfirmation title="Delete contract" locked={locked}
+    {action === 'assign' && <AssignContract contract={contract} close={() => setAction(undefined)} onSaved={onSaved} />}
+    {action === 'delete' && <DeleteConfirmation title="Delete contract" locked={locked}
       description={`Delete “${contract.title}” and its negotiation history from the workspace? This is permanent.`}
-      close={() => setConfirming(false)} remove={async () => {
+      close={() => setAction(undefined)} remove={async () => {
         await api('/' + contract.id + '/delete', {})
         onSaved()
       }} />}
   </>
 }
 
-export function WorkspaceContractsTable({ contracts, canManage, onDeleted }: {
-  contracts: Summary[]; canManage: boolean; onDeleted: (id: string) => void
+export function WorkspaceContractsTable({ contracts, canManage, onSaved }: {
+  contracts: Summary[]; canManage: boolean; onSaved: () => void
 }) {
   const columns: TableColumn<Summary>[] = [
     ...contractColumns,
-    { key: 'actions', header: '', width: pixel(48), renderCell: contract =>
-      <ContractActions contract={contract} canManage={canManage} onSaved={() => onDeleted(contract.id)} /> },
+    { key: 'owner', header: 'Owner', width: proportional(1, { minWidth: 165 }), renderCell: ({ owner }) => <ContractPerson person={owner} /> },
+    { key: 'assignee', header: 'Assigned to', width: proportional(1, { minWidth: 165 }), renderCell: ({ assignee }) => <ContractPerson person={assignee} /> },
+    { key: 'team', header: 'Team', width: pixel(112), renderCell: ({ team }) => <ContractTeam team={team} /> },
+    { key: 'createdAt', header: 'Created', width: pixel(115), renderCell: ({ createdAt }) => dateLabel(createdAt) },
+    { key: 'updatedAt', header: 'Updated', width: pixel(115), renderCell: ({ updatedAt }) => dateLabel(updatedAt) },
+    { key: 'actions', header: '', width: pixel(56), renderCell: contract =>
+      <ContractActions contract={contract} canManage={canManage} onSaved={onSaved} /> },
   ]
-  return <Table<Summary> data={contracts} columns={columns} idKey="id" hasHover aria-label="Your contracts" />
+  return <Table data={contracts} columns={columns} idKey="id" hasHover aria-label="Your contracts" />
+}
+
+const workspaceActionTitle = { assign: 'Assign to…', label: 'Add label', duplicate: 'Duplicate workspace', move: 'Move to project' } as const
+type WorkspaceAction = keyof typeof workspaceActionTitle
+const projectOptionValue = (project?: string | null) => project ? 'project:' + project : 'unassigned'
+
+function CustomizeWorkspace({ workspace, projectAssignments, action, close, onSaved }: {
+  projectAssignments: { value: string; label: string }[];
+  workspace: Workspace; action: WorkspaceAction; close: () => void; onSaved: (workspace: Workspace) => void
+}) {
+  const [name, setName] = useState(workspace.name.slice(0, 153) + ' (copy)')
+  const [label, setLabel] = useState('')
+  const [requestId] = useState(() => crypto.randomUUID())
+  const [description, setDescription] = useState(workspace.description)
+  const [project, setProject] = useState(workspace.project ?? '')
+  const projectUnchanged = project === (workspace.project ?? '')
+  const projectInvalid = !workspaceProject.safeParse(project).success
+  const [assignee, setAssignee] = useState(workspace.assignee?.email ?? '')
+  const [parties, setParties] = useState<WorkspaceParties['parties']>()
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    if (action !== 'assign') return
+    const abort = new AbortController()
+    void workspaceAction<WorkspaceParties>(workspace.id, 'parties', undefined, abort.signal).then(result => {
+      if (abort.signal.aborted) return
+      setParties(result.parties)
+      setAssignee(current => current || result.parties[0]?.email || '')
+    }).catch(reason => { if (!abort.signal.aborted) setError(errorMessage(reason)) })
+    return () => abort.abort()
+  }, [workspace.id, action])
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const party = parties?.find(person => person.email === assignee)
+    if (saving || (action === 'assign' && !party) || (action === 'move' && projectUnchanged)) return
+    setSaving(true)
+    setError('')
+    try {
+      if (action === 'duplicate') {
+        const result = await workspaceAction<Workspace>(workspace.id, 'duplicate', { name, description, project, requestId })
+        onSaved({ ...result, role: 'owner' })
+      } else {
+        const fields = action === 'label' ? { label }
+          : action === 'assign' ? { assigneeId: party?.id }
+          : { project }
+        const result = await workspaceAction<Workspace>(workspace.id, 'customize', fields)
+        onSaved({ ...workspace, ...result })
+      }
+      close()
+    } catch (reason) {
+      setSaving(false)
+      setError(errorMessage(reason))
+    }
+  }
+  return <Dialog isOpen onOpenChange={open => { if (!open && !saving) close() }} purpose="form">
+    <Layout header={<DialogHeader title={workspaceActionTitle[action]} onOpenChange={open => { if (!open && !saving) close() }} />}
+      content={<LayoutContent padding={4}>
+        <form onSubmit={save}>
+          <VStack gap={3}>
+            {action === 'duplicate' && <>
+              <TextInput label="Workspace name" value={name} onChange={setName} isRequired width="100%" />
+              <TextInput label="Project" value={project} onChange={setProject} width="100%"
+                status={projectInvalid ? { type: 'error', message: 'Use up to 160 characters for the project name.' } : undefined} />
+              <TextArea label="Description" value={description} onChange={setDescription} width="100%" rows={3} />
+            </>}
+            {action === 'duplicate' && <Text color="secondary">Creates a new workspace with these details.</Text>}
+            {action === 'assign' && <Selector label="Assignee" value={assignee} options={parties?.map(party => party.email) ?? []}
+              onChange={setAssignee} isDisabled={!parties} />}
+            {action === 'move' && <Selector label="Project" value={projectOptionValue(project)} options={projectAssignments} width="100%"
+              onChange={value => setProject(value === 'unassigned' ? '' : value.slice('project:'.length))} />}
+            {action === 'label' && <TextInput label="Label" value={label} onChange={setLabel} isRequired width="100%" />}
+            {error && <Banner role="alert" status="error" title={error} />}
+            <HStack hAlign="end" gap={2}>
+              <Button label="Cancel" onClick={close} isDisabled={saving} />
+              <Button label={action === 'duplicate' ? 'Duplicate' : 'Save changes'} type="submit" variant="primary" isLoading={saving}
+                isDisabled={action === 'assign' ? !parties || !assignee
+                  : action === 'label' ? !label.trim()
+                  : action === 'move' ? projectUnchanged
+                  : !name.trim() || projectInvalid} />
+            </HStack>
+          </VStack>
+        </form>
+      </LayoutContent>} />
+  </Dialog>
 }
 
 function DeleteConfirmation({ title, description, close, remove, locked = false }: {
@@ -147,134 +296,13 @@ function DeleteConfirmation({ title, description, close, remove, locked = false 
   </Dialog>
 }
 
-const workspaceActionTitle = { edit: 'Edit workspace', assign: 'Assign to…', label: 'Add label', duplicate: 'Duplicate workspace', move: 'Move to project' } as const
-type WorkspaceAction = keyof typeof workspaceActionTitle
-const projectOptionValue = (project?: string | null) => project ? 'project:' + project : 'unassigned'
-
-function CustomizeWorkspace({ workspace, currentStatus, projectAssignments, action, close, onSaved }: {
-  projectAssignments: { value: string; label: string }[];
-  currentStatus: WorkspaceStatus;
-  workspace: Workspace; action: WorkspaceAction; close: () => void; onSaved: (workspace: Workspace) => void
-}) {
-  const [name, setName] = useState(action === 'duplicate' ? (workspace.name.slice(0, 153) + ' (copy)') : workspace.name)
-  const [label, setLabel] = useState('')
-  const [requestId] = useState(() => crypto.randomUUID())
-  const [description, setDescription] = useState(workspace.description)
-  const [project, setProject] = useState(workspace.project ?? '')
-  const projectUnchanged = project === (workspace.project ?? '')
-  const projectInvalid = !workspaceProject.safeParse(project).success
-  const [status, setStatus] = useState<WorkspaceStatus>(currentStatus)
-  const [assignee, setAssignee] = useState(workspace.assignee?.email ?? '')
-  const [parties, setParties] = useState<WorkspaceParties['parties']>()
-  const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
-  useEffect(() => {
-    if (action !== 'assign') return
-    const abort = new AbortController()
-    void workspaceAction<WorkspaceParties>(workspace.id, 'parties', undefined, abort.signal).then(result => {
-      if (abort.signal.aborted) return
-      setParties(result.parties)
-      setAssignee(current => current || result.parties[0]?.email || '')
-    }).catch(reason => { if (!abort.signal.aborted) setError(errorMessage(reason)) })
-    return () => abort.abort()
-  }, [workspace.id, action])
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const party = parties?.find(person => person.email === assignee)
-    if (saving || (action === 'assign' && !party) || (action === 'move' && projectUnchanged)) return
-    setSaving(true)
-    setError('')
-    try {
-      if (action === 'duplicate') {
-        const result = await workspaceApi<Workspace>({ name, description, project, requestId })
-        onSaved({ ...result, role: 'owner' })
-      } else {
-        const fields = action === 'label' ? { label }
-          : action === 'assign' ? { assigneeId: party?.id }
-          : action === 'move' ? { project }
-          : { name, description, project, ...(status !== currentStatus ? { status } : {}) }
-        const result = await workspaceAction<Workspace>(workspace.id, 'customize', fields)
-        onSaved({ ...workspace, ...result })
-      }
-      close()
-    } catch (reason) {
-      setSaving(false)
-      setError(errorMessage(reason))
-    }
-  }
-  return <Dialog isOpen onOpenChange={open => { if (!open && !saving) close() }} purpose="form" padding={0}>
-    <Layout header={<DialogHeader title={workspaceActionTitle[action]} onOpenChange={open => { if (!open && !saving) close() }} />}
-      content={<LayoutContent padding={4}>
-        <form onSubmit={save}>
-          {(action === 'edit' || action === 'duplicate') && <>
-            <TextInput label="Workspace name" value={name} onChange={setName} isRequired width="100%" />
-            <TextInput label="Project" value={project} onChange={setProject} width="100%"
-              status={projectInvalid ? { type: 'error', message: 'Use up to 160 characters for the project name.' } : undefined} />
-            <TextArea label="Description" value={description} onChange={setDescription} width="100%" rows={3} />
-          </>}
-          {action === 'duplicate' && <Text color="secondary">Creates a new workspace with these details.</Text>}
-          {action === 'edit' && <Selector label="Status" value={status} options={[...workspaceStatuses]} onChange={value => {
-            const selected = workspaceStatuses.find(item => item === value)
-            if (selected) setStatus(selected)
-          }} />}
-          {action === 'assign' && <Selector label="Assignee" value={assignee} options={parties?.map(party => party.email) ?? []}
-            onChange={setAssignee} isDisabled={!parties} />}
-          {action === 'move' && <Selector label="Project" value={projectOptionValue(project)} options={projectAssignments}
-            onChange={value => setProject(value === 'unassigned' ? '' : value.slice('project:'.length))} />}
-          {action === 'label' && <TextInput label="Label" value={label} onChange={setLabel} isRequired width="100%" />}
-          {error && <Banner role="alert" status="error" title={error} />}
-          <HStack gap={2}>
-            <Button label="Cancel" onClick={close} isDisabled={saving} />
-            <Button label={action === 'duplicate' ? 'Duplicate' : 'Save changes'} type="submit" variant="primary" isLoading={saving}
-              isDisabled={action === 'assign' ? !parties || !assignee
-                : action === 'label' ? !label.trim()
-                : action === 'move' ? projectUnchanged
-                : !name.trim() || projectInvalid} />
-          </HStack>
-        </form>
-      </LayoutContent>} />
-  </Dialog>
-}
-
-function DeleteWorkspace({ workspace, close, onDeleted }: {
-  workspace: Workspace; close: () => void; onDeleted: (id: string) => void
-}) {
-  const [error, setError] = useState('')
-  const [deleting, setDeleting] = useState(false)
-  async function remove() {
-    setDeleting(true)
-    setError('')
-    try {
-      await workspaceAction(workspace.id, 'delete', {})
-      onDeleted(workspace.id)
-      close()
-    } catch (reason) {
-      setError(errorMessage(reason))
-      setDeleting(false)
-    }
-  }
-  const onOpenChange = (open: boolean) => { if (!open && !deleting) close() }
-  return <Dialog isOpen onOpenChange={onOpenChange} purpose="form" padding={0}>
-    <Layout header={<DialogHeader title="Delete workspace" onOpenChange={onOpenChange} />}
-      content={<LayoutContent padding={4}>
-        <VStack gap={3}>
-          <Text>Delete {workspace.name}? Only empty, unshared workspaces can be deleted.</Text>
-          {error && <Banner role="alert" status="error" title={error} />}
-          <HStack gap={2}>
-            <Button label="Cancel" onClick={close} isDisabled={deleting} />
-            <Button label="Delete workspace" variant="destructive" isLoading={deleting} clickAction={remove} />
-          </HStack>
-        </VStack>
-      </LayoutContent>} />
-  </Dialog>
-}
-
-export default function WorkspacesTable({ workspaces, contractsByWorkspace, otherContracts, workspaceHref, error, onWorkspaceSaved, onWorkspaceDeleted }: {
+export default function WorkspacesTable({ workspaces, contractsByWorkspace, otherContracts, workspaceHref, error, onContractSaved, onWorkspaceSaved, onWorkspaceDeleted }: {
   workspaces: Workspace[] | null
   contractsByWorkspace: Map<string, Summary[]> | null
   otherContracts: Summary[]
   workspaceHref: (workspace: Workspace) => string
   error: string
+  onContractSaved: () => void
   onWorkspaceSaved: (workspace: Workspace) => void
   onWorkspaceDeleted: (id: string) => void
 }) {
@@ -335,7 +363,7 @@ export default function WorkspacesTable({ workspaces, contractsByWorkspace, othe
             variant: 'ghost', size: 'sm', icon: <Icon icon={EllipsisHorizontalIcon} size="sm" /> }}
           hasChevron={false} alignment="end"
           items={[
-            { label: 'Edit', icon: PencilIcon, onClick: () => setAction({ id: workspace.id, kind: 'edit' }) },
+            { label: 'Edit', icon: PencilIcon, onClick: () => location.assign('/workspaces/' + workspace.id + '/edit') },
             { label: 'Assign to…', icon: UserIcon, onClick: () => setAction({ id: workspace.id, kind: 'assign' }) },
             { label: 'Add label', icon: TagIcon, onClick: () => setAction({ id: workspace.id, kind: 'label' }) },
             { label: 'Duplicate', icon: DocumentDuplicateIcon, onClick: () => setAction({ id: workspace.id, kind: 'duplicate' }) },
@@ -396,12 +424,20 @@ export default function WorkspacesTable({ workspaces, contractsByWorkspace, othe
     <Button label="Open workspace" href={workspaceHref(selected)} variant="primary" />
     <Heading level={3}>Contracts</Heading>
     {contracts?.length ? <VStack gap={3} role="list" aria-label="Workspace contracts">
-      {contracts.map(({ id, title, status, role }, index) => <VStack key={id} gap={2} role="listitem">
+      {contracts.map((contract, index) => <VStack key={contract.id} gap={2} role="listitem">
         {index > 0 && <Divider />}
-        <Link href={'/contracts/' + id} weight="semibold">{title}</Link>
+        <HStack gap={2} hAlign="between" vAlign="center">
+          <Link href={'/contracts/' + contract.id} weight="semibold">{contract.title}</Link>
+          <ContractActions contract={contract} canManage={selected.role === 'owner'} onSaved={onContractSaved} />
+        </HStack>
         <MetadataList label={{ position: 'top' }}>
-          <MetadataListItem label="Status"><StatusLabel label={status} variant={statusVariant[status]} /></MetadataListItem>
-          <MetadataListItem label="Role">{contractRole[role]}</MetadataListItem>
+          <MetadataListItem label="Status"><StatusLabel label={contract.status} variant={statusVariant[contract.status]} /></MetadataListItem>
+          <MetadataListItem label="Role">{contractRole[contract.role]}</MetadataListItem>
+          <MetadataListItem label="Owner"><ContractPerson person={contract.owner} /></MetadataListItem>
+          <MetadataListItem label="Assigned to"><ContractPerson person={contract.assignee} /></MetadataListItem>
+          <MetadataListItem label="Team"><ContractTeam team={contract.team} /></MetadataListItem>
+          <MetadataListItem label="Created">{dateLabel(contract.createdAt)}</MetadataListItem>
+          <MetadataListItem label="Updated">{dateLabel(contract.updatedAt)}</MetadataListItem>
         </MetadataList>
       </VStack>)}
     </VStack>
@@ -468,9 +504,14 @@ export default function WorkspacesTable({ workspaces, contractsByWorkspace, othe
       </>}
     />
     {customizing && action && (action.kind === 'delete'
-      ? <DeleteWorkspace key={customizing.id} workspace={customizing} close={() => setAction(undefined)}
-        onDeleted={(id) => { if (selectedId === id) setSelectedId(undefined); onWorkspaceDeleted(id) }} />
-      : <CustomizeWorkspace key={customizing.id + ':' + action.kind} workspace={customizing} currentStatus={statusOf(customizing)}
+      ? <DeleteConfirmation key={customizing.id} title="Delete workspace" close={() => setAction(undefined)}
+        description={`Delete ${customizing.name}? Only empty, unshared workspaces can be deleted.`}
+        remove={async () => {
+          await workspaceAction(customizing.id, 'delete', {})
+          if (selectedId === customizing.id) setSelectedId(undefined)
+          onWorkspaceDeleted(customizing.id)
+        }} />
+      : <CustomizeWorkspace key={customizing.id + ':' + action.kind} workspace={customizing}
         projectAssignments={[noProject, ...assignedProjects]} action={action.kind} close={() => setAction(undefined)} onSaved={onWorkspaceSaved} />)}
   </>
 }

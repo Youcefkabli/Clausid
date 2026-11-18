@@ -102,6 +102,12 @@ iframe {
   padding: 72px;
 }
 
+.canvas-contract-text canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .canvas-contract-text .tiptap,
 .canvas-contract-text .tiptap :where(p, li, blockquote) {
   font-size: 32px;

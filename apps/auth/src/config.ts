@@ -1,4 +1,4 @@
-import { betterAuth } from 'better-auth'
+import { createAuth } from './policy.ts'
 import Database from 'better-sqlite3'
 import nodemailer from 'nodemailer'
 import { mkdirSync } from 'node:fs'
@@ -32,25 +32,10 @@ export async function sendMail(to: string, subject: string, text: string) {
   await transport.sendMail({ from: required('MAIL_FROM'), to, subject, text })
 }
 
-export const auth = betterAuth({
+export const auth = createAuth({
   database,
+  origin,
   secret: required('BETTER_AUTH_SECRET'),
-  baseURL: origin,
-  trustedOrigins: [origin],
-  advanced: {
-    useSecureCookies: origin.startsWith('https:'),
-    ipAddress: { ipAddressHeaders: ['x-clausid-client-ip'] },
-  },
-  emailAndPassword: {
-    enabled: true,
-    requireEmailVerification: true,
-    minPasswordLength: 12,
-    sendResetPassword: async ({ user, url }) => sendMail(user.email, 'Reset your Clausid password', url),
-  },
-  emailVerification: {
-    sendOnSignUp: true,
-    sendVerificationEmail: async ({ user, url }) => sendMail(user.email, 'Verify your Clausid email', url),
-  },
-  session: { expiresIn: 60 * 60 * 24 * 7, freshAge: 10 * 60, cookieCache: { enabled: false } },
-  rateLimit: { enabled: true, window: 60, max: 60, storage: 'database' },
+  clientIpHeader: 'x-clausid-client-ip',
+  sendMail,
 })

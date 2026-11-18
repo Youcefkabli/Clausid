@@ -3,7 +3,10 @@ import { ValidationError } from '@clausid/contracts'
 export interface Env {
   CONTRACTS: DurableObjectNamespace
   DIRECTORY: DurableObjectNamespace
-  AUTH: Fetcher
+  AUTH: Pick<Fetcher, 'fetch'>
+  WEB_DISK?: Pick<Fetcher, 'fetch'>
+  ASSETS?: Pick<Fetcher, 'fetch'>
+  OPS_KEY?: string
   PUBLIC_ORIGIN: string
   INTERNAL_AUTH_KEY: string
 }

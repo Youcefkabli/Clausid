@@ -1,19 +1,15 @@
+# Example for a Caddy process on the VPS host.
 {$PUBLIC_HOST} {
-  header {
-    Strict-Transport-Security "max-age=31536000"
-    X-Content-Type-Options "nosniff"
-    Referrer-Policy "no-referrer"
-    X-Frame-Options "SAMEORIGIN"
-  }
-  @api path /api/* /healthz
-  handle @api {
-    reverse_proxy worker:8787 {
-      header_up X-Clausid-Client-IP {http.request.remote.host}
-    }
-  }
-  handle {
-    root * /srv
-    try_files {path} /index.html
-    file_server
-  }
+	reverse_proxy 127.0.0.1:8787 {
+		header_up X-Clausid-Client-IP {http.request.remote.host}
+	}
 }
+
+# For Cloudflare Tunnel, use this dedicated loopback site instead.
+# Point cloudflared at http://127.0.0.1:8790 on the same host.
+# http://127.0.0.1:8790 {
+# 	bind 127.0.0.1
+# 	reverse_proxy 127.0.0.1:8787 {
+# 		header_up X-Clausid-Client-IP {http.request.header.CF-Connecting-IP}
+# 	}
+# }

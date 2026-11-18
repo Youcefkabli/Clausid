@@ -4,7 +4,7 @@
   "name": "@clausid/web",
   "scripts": {
     "dev": "vp dev --host 127.0.0.1",
-    "build": "vp build"
+    "build": "vp build && node ../../scripts/web-assets.mjs"
   },
   "dependencies": {
     "@astryxdesign/core": "0.7.16",

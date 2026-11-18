@@ -11,14 +11,29 @@
     "build": "pnpm -r run build",
     "check": "tsc -b && vp lint",
     "test": "vp test run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "deploy": "node scripts/cloudflare-deploy.mjs"
   },
   "devDependencies": {
-    "vite-plus": "1.6.0",
-    "typescript": "5.9.3",
-    "@types/node": "24.10.1",
     "@playwright/test": "1.65.1",
+    "@types/node": "24.10.1",
     "fflate": "0.8.3",
+    "typescript": "5.9.3",
+    "vite-plus": "1.6.0",
+    "wrangler": "4.162.0",
     "yjs": "13.6.33"
+  },
+  "cloudflare": {
+    "bindings": {
+      "PUBLIC_ORIGIN": {
+        "description": "The exact public HTTPS origin for Clausid, without a trailing slash."
+      },
+      "MAIL_FROM": {
+        "description": "A sender address on a domain onboarded to Cloudflare Email Service."
+      },
+      "BETTER_AUTH_SECRET": {
+        "description": "A persistent random secret of at least 32 bytes."
+      }
+    }
   }
 }

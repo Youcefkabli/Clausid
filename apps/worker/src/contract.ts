@@ -2,12 +2,13 @@ import { DurableObject } from 'cloudflare:workers'
 import * as Y from 'yjs'
 import { strToU8, zipSync } from 'fflate'
 import {
-  clientMessage, consentText, consentVersion, freezeContract, inviteEditor, pdfAnnotationAction, previewContract,
+  assignContract, clientMessage, consentText, consentVersion, freezeContract, inviteEditor, pdfAnnotationAction, previewContract,
   redeemInvite, signContract, titleInput,
 } from '@clausid/contracts'
 import type { ContractView, PdfAnnotation, PdfTextBlock, Role, ServerMessage, Signature, Status } from '@clausid/contracts'
 import type { Account, Env } from './http.ts'
 import { artifact, decode, encode, hex, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
+import { authorizedOperation, snapshotObject } from './operations.ts'
 import { validateDraft } from './draft.ts'
 import { renderPdf } from './pdf.ts'
 import { inspectPdf, planPdfEdit, rewritePdf } from './pdf-rewrite.ts'
@@ -19,10 +20,11 @@ type Version = { id: string; digest: string; signers: string[]; frozenAt: string
 type Mail = { id: string; email: string; token: string; role: Invite['role'] }
 type RecordState = {
   id: string; title: string; owner: Member; editors: Member[]; signers: Member[]
+  createdAt?: number; updatedAt?: number; assigneeId?: string | null
   deletion?: { workspaceId?: string; accounts?: string[] }
   workspaceJoins?: string[]
   status: Status; revision: number; invites: Invite[]; preview: Preview | null
-  sourcePdf?: NonNullable<ContractView['sourcePdf']> & { digest: string }; annotations?: PdfAnnotation[]
+  sourcePdf?: ContractView['sourcePdf'] & { digest: string }; annotations?: PdfAnnotation[]
   negotiatedPdf?: { digest: string }
   version: Version | null; signatures: Signature[]; outbox: Mail[]; voidedAt?: string
 }
@@ -67,7 +69,11 @@ export class Contract extends DurableObject<Env> {
   #writeFile(id: string, bytes: Uint8Array) {
     this.ctx.storage.sql.exec('INSERT OR REPLACE INTO files VALUES (?, ?)', id, bytes)
   }
-  #save(state: RecordState, files?: () => void) {
+  #save(state: RecordState, files?: () => void, touch = true) {
+    if (touch) {
+      const updatedAt = Date.now()
+      state = { ...state, createdAt: state.createdAt ?? (this.#state ? undefined : updatedAt), updatedAt }
+    }
     this.ctx.storage.transactionSync(() => {
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO state VALUES ('contract', ?)", JSON.stringify(state))
       files?.()
@@ -83,8 +89,13 @@ export class Contract extends DurableObject<Env> {
   #view(state: RecordState, account: Account): ContractView {
     const role = this.#role(state, account)
     if (!role) throw absent()
+    const collaborators = role !== 'signer' && (state.status === 'Draft' || state.sourcePdf) ? state.editors : []
+    const team = [...new Map([state.owner, ...collaborators, ...state.signers].map(member => [member.id, member])).values()]
+    const lastRecordedActivity = state.voidedAt ?? state.signatures.at(-1)?.signedAt ?? state.version?.frozenAt
     return {
-      hasSignatures: state.signatures.length > 0 || state.status === 'Signed',
+      owner: state.owner, team, assignee: team.find(member => member.id === state.assigneeId),
+      createdAt: state.createdAt, hasSignatures: state.signatures.length > 0 || state.status === 'Signed',
+      updatedAt: state.updatedAt ?? (lastRecordedActivity ? Date.parse(lastRecordedActivity) : undefined),
       id: state.id, title: state.title, status: state.status, revision: state.revision, role,
       sourcePdf: state.sourcePdf && { name: state.sourcePdf.name, pages: state.sourcePdf.pages },
       negotiatedPdf: state.negotiatedPdf,
@@ -137,6 +148,19 @@ export class Contract extends DurableObject<Env> {
   }
 
   fetch(request: Request) {
+    if (new URL(request.url).pathname.startsWith('/ops/')) {
+      if (!authorizedOperation(request, this.env)) return new Response(null, { status: 404 })
+      return this.#serial(async () => {
+        const response = await snapshotObject(this.ctx, 'contract', request)
+        if (request.method === 'PUT' && response.ok) {
+          const row = this.ctx.storage.sql.exec<{ value: string }>('SELECT value FROM state').toArray()[0]
+          this.#state = row ? JSON.parse(row.value) : undefined
+          const draft = this.#file('draft')
+          if (draft) Y.applyUpdate(this.#draft, draft)
+        }
+        return response
+      })
+    }
     return this.#serial(() => safeResponse(() => this.#route(request)))
   }
 
@@ -158,7 +182,7 @@ export class Contract extends DurableObject<Env> {
         this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName(id))
           .fetch('https://directory/' + state.id, { method: 'DELETE' })))
       if (responses.some(response => !response.ok)) throw new Error('Directory cleanup failed')
-      this.#save({ ...state, deletion: {} })
+      this.#save({ ...state, deletion: {} }, undefined, false)
     } catch {
       console.error('Contract directory cleanup will retry')
     }
@@ -188,7 +212,7 @@ export class Contract extends DurableObject<Env> {
         this.#save(state, () => {
           this.ctx.storage.sql.exec('DELETE FROM files')
           this.ctx.storage.sql.exec('DELETE FROM edits')
-        })
+        }, false)
         this.#draft.destroy()
         this.#draft = new Y.Doc()
         this.#textBlocks = undefined
@@ -273,6 +297,17 @@ export class Contract extends DurableObject<Env> {
 
     const view = this.#view(state, account)
     if (action === 'view') return Response.json(view)
+    if (action === 'assign') {
+      if (view.role !== 'owner') throw new HttpError(403, 'Only the contract owner can assign this contract.')
+      const { assigneeId } = assignContract.parse(await readJson(request))
+      if (assigneeId !== null && !view.team?.some(member => member.id === assigneeId)) {
+        throw new HttpError(422, 'Choose a member of the contract team.')
+      }
+      if ((state.assigneeId ?? null) === assigneeId) return Response.json(view)
+      this.#save({ ...state, assigneeId })
+      this.#publish(this.#state!)
+      return Response.json(this.#view(this.#state!, account))
+    }
     if ((action === 'source-pdf' || action === 'source-download') && state.sourcePdf) {
       const bytes = this.#file('source')
       if (!bytes) throw absent()
@@ -453,7 +488,8 @@ export class Contract extends DurableObject<Env> {
         outbox: [...state.outbox.filter((item) => item.email !== email), mail] })
     } else if (action.startsWith('revoke/')) {
       const id = action.slice('revoke/'.length)
-      this.#save({ ...state, editors: state.editors.filter((item) => item.id !== id),
+      this.#save({ ...state, assigneeId: state.assigneeId === id && !state.signers.some(member => member.id === id) ? null : state.assigneeId,
+        editors: state.editors.filter((item) => item.id !== id),
         invites: state.invites.filter((item) => item.id !== id), outbox: state.outbox.filter((item) => item.id !== id) })
     } else if (action === 'preview') {
       const { revision, signers } = previewContract.parse(await readJson(request))
@@ -465,7 +501,7 @@ export class Contract extends DurableObject<Env> {
         : state.sourcePdf ? this.#getSourcePdf() : await renderPdf(state.title, this.#draft)
       if (!bytes) throw absent()
       const preview = { id: crypto.randomUUID(), revision, signers, digest: await sha256(bytes), expires: Date.now() + 15 * 60_000 }
-      this.#save({ ...state, preview }, () => this.#writeFile('preview', bytes))
+      this.#save({ ...state, preview }, () => this.#writeFile('preview', bytes), false)
       return Response.json({ id: preview.id, digest: preview.digest })
     } else if (action.startsWith('preview/')) {
       if (state.preview?.id !== action.slice('preview/'.length) || state.preview.expires <= Date.now()
@@ -511,6 +547,12 @@ export class Contract extends DurableObject<Env> {
   }
   alarm() {
     return this.#serial(async () => {
+      if (this.env.OPS_KEY) {
+        if (this.#state?.outbox.length || this.#state?.deletion?.accounts?.length) {
+          await this.ctx.storage.setAlarm(Date.now() + 60_000)
+        }
+        return
+      }
       if (this.#state?.deletion) {
         await this.#finishDeletion(this.#state)
         return
@@ -536,13 +578,17 @@ export class Contract extends DurableObject<Env> {
           }
         }
         state = { ...state, outbox: state.outbox.filter(({ id }) => id !== mail.id) }
-        this.#save(state)
+        this.#save(state, undefined, false)
       }
       await this.#schedule()
     })
   }
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
     return this.#serial(async () => {
+      if (this.env.OPS_KEY) {
+        socket.close(1012, 'Maintenance')
+        return
+      }
       const attachment = socket.deserializeAttachment() as Attachment
       const state = this.#state
       if (!state || !this.#role(state, attachment.account)) {

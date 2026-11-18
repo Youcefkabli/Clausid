@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { toNodeHandler } from 'better-auth/node'
 import { auth, origin, required, sendMail } from './config.ts'
+import { sendInvitation, sessionResponse } from './operations.ts'
 
 const handleAuth = toNodeHandler(auth)
 const key = Buffer.from(required('INTERNAL_AUTH_KEY'))
@@ -15,16 +16,8 @@ const server = createServer(async (request, response) => {
       return
     }
     if (url.pathname === '/internal/session' && request.method === 'GET') {
-      const session = await auth.api.getSession({ headers: new Headers({ cookie: request.headers.cookie ?? '' }) })
-      if (!session?.user.emailVerified) {
-        response.writeHead(401).end()
-        return
-      }
-      response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-      response.end(JSON.stringify({
-        id: session.user.id, email: session.user.email.toLowerCase(), name: session.user.name,
-        createdAt: session.session.createdAt.getTime(), expires: session.session.expiresAt.getTime(),
-      }))
+      const result = await sessionResponse(auth, new Headers({ cookie: request.headers.cookie ?? '' }))
+      response.writeHead(result.status, Object.fromEntries(result.headers)).end(await result.text())
       return
     }
     if (url.pathname === '/internal/invite' && request.method === 'POST') {
@@ -38,13 +31,7 @@ const server = createServer(async (request, response) => {
         }
         chunks.push(chunk)
       }
-      const { email, contractId, token, role } = JSON.parse(Buffer.concat(chunks).toString())
-      const url = new URL(`/${role === 'workspace' ? 'workspace-invite' : 'invite'}/${contractId}`, origin)
-      const fragment = new URLSearchParams({ token })
-      url.hash = fragment.toString()
-      await sendMail(email, role === 'workspace' ? 'You are invited to a Clausid workspace'
-        : role === 'signer' ? 'You have a Clausid contract to sign' : 'You are invited to edit a Clausid contract',
-        `Open this invitation and sign in with the verified email address it was sent to.\n\n${url.href}`)
+      await sendInvitation(origin, sendMail, JSON.parse(Buffer.concat(chunks).toString()))
       response.writeHead(204).end()
       return
     }

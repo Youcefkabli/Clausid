@@ -75,9 +75,9 @@ import {Heading, Text} from '@astryxdesign/core/Text';
 import {TextArea} from '@astryxdesign/core/TextArea';
 import {TextInput} from '@astryxdesign/core/TextInput';
 import {useMediaQuery} from '@astryxdesign/core/hooks';
-import {emailAddress, titleInput, workspaceDocumentLimit, workspaceProject, workspaceSlug} from '@clausid/contracts';
+import {emailAddress, titleInput, workspaceDocumentLimit, workspaceProject, workspaceSlug, workspaceStatuses} from '@clausid/contracts';
 import type {Workspace} from '@clausid/contracts';
-import {ApiError, errorMessage, workspaceApi} from '../../api.ts';
+import {ApiError, errorMessage, workspaceAction, workspaceApi} from '../../api.ts';
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -115,8 +115,9 @@ function parseEmails(raw: string): string[] {
     .filter(Boolean);
 }
 
-export default function FormWizardPage() {
-  const wizardTitle = 'Create workspace';
+export default function FormWizardPage({ workspace }: { workspace?: Workspace }) {
+  const editing = workspace !== undefined;
+  const wizardTitle = editing ? 'Edit workspace' : 'Create workspace';
   const isNarrow = useMediaQuery('(max-width: 640px)');
 
   // Focus targets for every field `validate` can complain about, keyed by the
@@ -144,10 +145,14 @@ export default function FormWizardPage() {
   const [attempted, setAttempted] = useState<ReadonlySet<number>>(new Set());
 
   // Step 1 — workspace
-  const [name, setName] = useState('');
-  const [project, setProject] = useState('');
-  const [description, setDescription] = useState('');
-  const [slug, setSlug] = useState('');
+  const [name, setName] = useState(workspace?.name ?? '');
+  const [project, setProject] = useState(workspace?.project ?? '');
+  const [description, setDescription] = useState(workspace?.description ?? '');
+  const [status, setStatus] = useState(workspace?.status);
+  const [slug, setSlug] = useState(workspace?.slug ?? '');
+  const workspaceURL = workspace?.slug
+    ? '/?workspaceSlug=' + encodeURIComponent(workspace.slug)
+    : workspace ? '/?workspace=' + workspace.id : '';
   const [region, setRegion] = useState('us-east');
   const [visibility, setVisibility] = useState('invite');
 
@@ -177,6 +182,7 @@ export default function FormWizardPage() {
       details.project = 'Use up to 160 characters for the project name.';
     }
     if (description.trim().length > 500) details.description = 'Use up to 500 characters for the description.';
+    if (editing) return [details, {}, {}, {}];
     if (!slug.trim()) {
       details.slug = 'Enter a URL for the workspace.';
     } else if (TAKEN_SLUGS.includes(slug.trim()) || slug.trim() === takenSlug) {
@@ -203,6 +209,7 @@ export default function FormWizardPage() {
     name,
     project,
     description,
+    editing,
     slug,
     invalidEmails,
     emails.length,
@@ -259,6 +266,17 @@ export default function FormWizardPage() {
 
     setBusy(true);
     try {
+      if (workspace) {
+        const changes = {
+          ...(name.trim() !== workspace.name ? { name: name.trim() } : {}),
+          ...(project.trim() !== (workspace.project ?? '') ? { project: project.trim() } : {}),
+          ...(description.trim() !== workspace.description ? { description: description.trim() } : {}),
+          ...(status && status !== workspace.status ? { status } : {}),
+        };
+        if (Object.keys(changes).length) await workspaceAction<Workspace>(workspace.id, 'customize', changes);
+        location.assign('/');
+        return;
+      }
       let attachment;
       if (document) {
         try {
@@ -276,9 +294,9 @@ export default function FormWizardPage() {
         requestId, name: name.trim(), project: project.trim(), description: description.trim(),
         slug: slug.trim(), document: attachment, team: emails,
       });
-      location.assign(created.firstContractId ? '/contracts/' + created.firstContractId : created.slug ? '/?workspaceSlug=' + created.slug : '/?workspace=' + created.id);
+      location.assign(created.firstContractId ? '/contracts/' + created.firstContractId : '/?workspace=' + created.id);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409 && error.message.includes('workspace URL')) {
+      if (!editing && error instanceof ApiError && error.status === 409 && error.message.includes('workspace URL')) {
         setTakenSlug(slug.trim());
         markAttempted(0);
         setStep(0);
@@ -344,7 +362,7 @@ export default function FormWizardPage() {
                   key={s}
                   step={i}
                   label={s}
-                  isOptional={s === 'Document'}
+                  isOptional={!editing && s === 'Document'}
                   status={
                     Object.keys(shownErrors(i)).length > 0 ? 'error' : undefined
                   }
@@ -365,7 +383,8 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Workspace details</Heading>
                 <Text type="supporting" color="secondary">
-                  Name your workspace and choose its URL. Region and access choices are shown for preview.
+                  {editing ? 'Update the workspace name, project, description, or status.'
+                    : 'Name your workspace and choose its URL. Region and access choices preview the template. This deployment stores data locally. Your workspace starts private until you invite parties.'}
                 </Text>
               </VStack>
               {/* FormLayout, not a VStack: form fields are the one case where
@@ -393,24 +412,31 @@ export default function FormWizardPage() {
                 <TextArea label="Description" ref={fieldRefs.description} value={description}
                   onChange={setDescription} rows={3}
                   status={currentErrors.description ? {type: 'error', message: currentErrors.description} : undefined} />
+                <Selector label="Status" value={status ?? 'Automatic'}
+                  options={workspace?.status ? [...workspaceStatuses] : ['Automatic', ...workspaceStatuses]}
+                  isDisabled={!editing}
+                  onChange={value => setStatus(workspaceStatuses.find(option => option === value))} />
                 <TextInput
                   label="Workspace URL"
                   ref={fieldRefs.slug}
                   isRequired
-                  value={slug}
+                  isReadOnly={editing}
+                  value={editing ? location.origin + workspaceURL : slug}
                   onChange={setSlug}
                   placeholder="acme"
-                  description={location.origin + '/?workspaceSlug=' + (slug.trim() || 'your-workspace')}
+                  description={editing ? 'The workspace URL is fixed after creation.'
+                    : location.origin + '/?workspaceSlug=' + (slug.trim() || 'your-workspace')}
                   status={currentErrors.slug ? {type: 'error', message: currentErrors.slug} : undefined}
                 />
                 <Selector
                   label="Data region"
-                  options={REGIONS}
-                  value={region}
+                  options={editing ? [{value: 'deployment', label: 'Managed by the deployment'}, ...REGIONS] : REGIONS}
+                  value={editing ? 'deployment' : region}
+                  isDisabled={editing}
                   onChange={setRegion}
                   description="Where projects, files, and audit logs are stored at rest."
                 />
-                <RadioList label="Who can join" value={visibility} onChange={setVisibility}>
+                <RadioList label="Who can join" value={visibility} onChange={setVisibility} isDisabled={editing}>
                   <RadioListItem
                     value="invite"
                     label="Invite only"
@@ -436,7 +462,8 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Invite your team</Heading>
                 <Text type="supporting" color="secondary">
-                  Invite at least one party to the workspace.
+                  {editing ? 'Manage parties and invitations from the workspace.'
+                    : 'Invite at least one party to the workspace.'}
                 </Text>
               </VStack>
               <FormLayout defaultOptionality="optional">
@@ -444,7 +471,8 @@ export default function FormWizardPage() {
                   label="Email addresses"
                   ref={fieldRefs.invites}
                   rows={4}
-                  isRequired
+                  isRequired={!editing}
+                  isReadOnly={editing}
                   value={invites}
                   onChange={setInvites}
                   placeholder={'jordan@acme.com\npriya@acme.com'}
@@ -463,6 +491,7 @@ export default function FormWizardPage() {
                   }
                 />
               </FormLayout>
+              {editing && <HStack><Button label="Open workspace" href={workspaceURL} /></HStack>}
             </VStack>
           )}
 
@@ -471,13 +500,14 @@ export default function FormWizardPage() {
               <VStack gap={1}>
                 <Heading level={2}>Document</Heading>
                 <Text type="supporting" color="secondary">
-                  Upload an editable PDF to create the first contract, or continue with an empty workspace.
+                  {editing ? workspace.documentName ?? 'No document was attached during setup.'
+                    : 'Upload an editable PDF to create the first contract, or continue with an empty workspace.'}
                 </Text>
               </VStack>
               <FormLayout defaultOptionality="optional">
                 <FileInput label="PDF document" ref={fieldRefs.document} mode="dropzone"
-                  accept=".pdf,application/pdf" isOptional maxSize={workspaceDocumentLimit} value={document} isDisabled={busy}
-                  description="PDF with selectable text, up to 1 MB."
+                  accept=".pdf,application/pdf" isOptional={!editing} maxSize={workspaceDocumentLimit} value={document} isDisabled={editing || busy}
+                  description={editing ? 'The original setup document is fixed after creation.' : 'PDF with selectable text, up to 1 MB.'}
                   onChange={file => {
                     setDocument(Array.isArray(file) ? file[0] ?? null : file);
                     setDocumentError('');
@@ -490,9 +520,10 @@ export default function FormWizardPage() {
           {step === 3 && (
             <VStack gap={5}>
               <VStack gap={1}>
-                <Heading level={2}>Review and create</Heading>
+                <Heading level={2}>{editing ? 'Review changes' : 'Review and create'}</Heading>
                 <Text type="supporting" color="secondary">
-                  Creating sends the workspace invitations and opens the uploaded PDF in Canvas.
+                  {editing ? 'Review the workspace details before saving.'
+                    : 'Creating opens this workspace in Canvas and sends the invitations.'}
                 </Text>
               </VStack>
 
@@ -541,11 +572,12 @@ export default function FormWizardPage() {
                 </MetadataListItem>
                 <MetadataListItem label="Project">{project.trim() || '—'}</MetadataListItem>
                 <MetadataListItem label="Workspace URL">
-                  {location.origin + '/?workspaceSlug=' + (slug.trim() || '—')}
+                  {editing ? location.origin + workspaceURL : location.origin + '/?workspaceSlug=' + (slug.trim() || '—')}
                 </MetadataListItem>
                 <MetadataListItem label="Description">{description.trim() || '—'}</MetadataListItem>
+                <MetadataListItem label="Status">{status ?? 'Automatic'}</MetadataListItem>
                 <MetadataListItem label="Data region">
-                  {REGIONS.find(r => r.value === region)?.label ?? region}
+                  {editing ? 'Managed by the deployment' : REGIONS.find(r => r.value === region)?.label ?? region}
                 </MetadataListItem>
                 <MetadataListItem label="Who can join">
                   {visibility === 'invite'
@@ -555,10 +587,10 @@ export default function FormWizardPage() {
                       : 'Anyone with the link'}
                 </MetadataListItem>
                 <MetadataListItem label="Invitations">
-                  {emails.join(', ') || '—'}
+                  {editing ? 'Managed in the workspace' : emails.join(', ') || '—'}
                 </MetadataListItem>
                 <MetadataListItem label="Document">
-                  {document?.name ?? 'None'}
+                  {workspace?.documentName ?? document?.name ?? 'None'}
                 </MetadataListItem>
               </MetadataList>
 
@@ -568,6 +600,7 @@ export default function FormWizardPage() {
                 label="I understand that the region and join policy choices are previews"
                 ref={fieldRefs.terms}
                 value={acceptedTerms}
+                isDisabled={editing}
                 onChange={setAcceptedTerms}
                 status={currentErrors.terms ? {type: 'error', message: currentErrors.terms} : undefined}
               />
@@ -596,7 +629,7 @@ export default function FormWizardPage() {
                   onClick={() => setStep(s => Math.max(0, s - 1))}
                 />
                 <Button
-                  label={isLastStep ? wizardTitle : 'Next'}
+                  label={isLastStep ? (editing ? 'Save changes' : wizardTitle) : 'Next'}
                   variant="primary"
                   // Never disabled: pressing it is how a step reveals what is
                   // wrong. A dead button with no explanation is a dead end.

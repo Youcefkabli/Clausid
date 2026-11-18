@@ -8,3 +8,9 @@ dist/
 *.tsbuildinfo
 playwright-report/
 test-results/
+/packages/ops/target/
+/.wrangler/
+/.wrangler.clausid.json
+/.dev.vars
+/.dev.vars.*
+!/.dev.vars.example

@@ -1,7 +1,7 @@
 import { customizeWorkspace, inviteEditor, redeemInvite } from '@clausid/contracts'
 import type { Workspace } from '@clausid/contracts'
 import type { Account, Env } from './http.ts'
-import { hex, HttpError, internal, readJson, sha256 } from './http.ts'
+import { artifact, hex, HttpError, internal, readJson, sha256 } from './http.ts'
 
 type Party = { id: string; email: string; redeemedDigest?: string }
 type Invitation = { email: string; digest: string; expires: number }
@@ -13,6 +13,7 @@ export async function deliverSetupInvitations(ctx: DurableObjectState, env: Env)
   const state = await ctx.storage.get<Sharing>('workspace-sharing')
   if (!state?.setupOutbox?.length || state.deleting) return
   await ctx.storage.setAlarm(Date.now() + 60_000)
+  if (env.OPS_KEY) return
   const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(state.owner.id))
   if (!(await directory.fetch('https://directory/workspaces/' + state.workspace.id)).ok) return
   for (const mail of state.setupOutbox) {
@@ -70,10 +71,26 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
 
   if (pathname === '/sharing/setup-result') {
     if (state.owner.id !== account.id || state.deleting) throw unavailable()
+    if (!state.setup && !state.workspace.firstContractId) {
+      throw new HttpError(409, 'This request was already used for a different workspace setup.')
+    }
     if (state.setupOutbox?.length) await ctx.storage.setAlarm(Date.now() + 1000)
     return Response.json(state.workspace, { status: 201 })
   }
 
+
+  if (pathname === '/sharing/document') {
+    if (state.owner.id !== account.id || state.deleting || !state.workspace.documentName) throw unavailable()
+    const row = ctx.storage.sql.exec<{ data: ArrayBuffer }>(
+      "SELECT data FROM workspace_documents WHERE id = 'source'",
+    ).toArray()[0]
+    if (!row) throw unavailable()
+    const response = artifact(new Uint8Array(row.data), 'application/pdf', 'workspace-document.pdf', true)
+    response.headers.set('Content-Disposition',
+      "attachment; filename*=UTF-8''" +
+      encodeURIComponent(new TextDecoder().decode(new TextEncoder().encode(state.workspace.documentName))).replace(/['()*]/g, character => '%' + character.charCodeAt(0).toString(16)))
+    return response
+  }
 
   if (pathname === '/sharing/delete') {
     if (state.owner.id !== account.id) throw unavailable()
@@ -93,6 +110,7 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
       throw conflict()
     }
     if (!result.ok) throw new HttpError(503, 'Workspace directory is temporarily unavailable. Try again.')
+    ctx.storage.sql.exec('DELETE FROM workspace_documents')
     return new Response(null, { status: 204 })
   }
 

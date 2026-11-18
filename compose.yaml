@@ -1,19 +1,4 @@
 services:
-  web:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-      target: web
-    environment:
-      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - worker
   worker:
     build:
       context: .
@@ -29,6 +14,10 @@ services:
       - auth=auth:8788
       - --directory-path
       - contractDisk=/var/lib/clausid/contracts
+      - --directory-path
+      - webDisk=/app/apps/web/dist
+    ports:
+      - "127.0.0.1:${CLAUSID_HTTP_PORT:-8787}:8787"
     environment:
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://localhost}"
       INTERNAL_AUTH_KEY: "${INTERNAL_AUTH_KEY:-}"
@@ -79,7 +68,5 @@ services:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 volumes:
-  caddy_data:
-  caddy_config:
   auth:
   contracts:

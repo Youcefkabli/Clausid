@@ -1,8 +1,9 @@
 import { build } from 'esbuild'
 import '../../scripts/build-pdf-engine.mjs'
 await build({
-  entryPoints: ['src/index.ts'],
-  outfile: 'dist/worker.mjs',
+  entryPoints: { worker: 'src/index.ts', 'migration-source': 'src/migration-source.ts' },
+  outdir: 'dist',
+  outExtension: { '.js': '.mjs' },
   bundle: true,
   format: 'esm',
   platform: 'browser',

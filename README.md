@@ -10,7 +10,9 @@ Clausid is a self-hosted web application for drafting contracts together and col
 
 ## Workspace workflow
 
-Sign in to open **Workspaces**. Create a workspace and use **Share workspace** to invite parties by verified email. The workspace creator is the service provider. Only the service provider can use **Add document** to start a private draft and choose **Export → Share → Share with workspace** to give current parties live editing access. Parties negotiate by editing the same draft. The service provider reviews and approves the frozen version for signing.
+Create a workspace with at least one invitee. Upload an editable PDF to open it as the first contract in Canvas, or continue to an empty Canvas. In **Annotations**, use **Propose a text replacement** to select a source line and specify the text to replace. The service provider approves or rejects each proposal. Canvas displays the negotiated PDF, and signing freezes the reviewed bytes while preserving the original and negotiation history. The rewrite engine supports replacements that fit inside a supported source line.
+
+Use **Add document** to start an additional draft. Choose **Export → Share → Share with workspace** to give workspace parties editing access to that draft.
 
 ## Develop locally
 
@@ -34,8 +36,6 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-Attach a selectable-text PDF up to 1 MB in the **Document** step when creating a workspace. It becomes the first contract and opens in Canvas for the owner and invited parties. In an existing workspace, choose **Add document** to upload a PDF. Use **Export → Share** to grant a workspace party access, then use **Annotations** to propose text replacements and approve or reject them. After resolving the annotations, prepare the negotiated PDF for signing from Canvas.
-
 The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `CLAUSID_TEST_BROWSER` with a Chrome executable path to use an existing installation.
 
 ## How it works
@@ -45,16 +45,25 @@ The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `C
 - **Auth** is a private Node service running Better Auth with `better-sqlite3` and SMTP. Verification and session checks use Better Auth. Contract invitations are single-use, expire after seven days, and are tied to the invited verified address. The workerd service retries invitation mail from its durable outbox. Delivery retries can send the same link more than once.
 - **Signing evidence** is a ZIP containing the immutable PDF and a JSON manifest with the digest, signer identities, timestamps, and recorded consent. The current PDF renderer embeds Noto Sans Latin fonts and blocks preview generation if the document contains characters it cannot reproduce.
 
-## Self-host
+## Deploy
 
-Set `PUBLIC_HOST` to a hostname pointed at the server and `PUBLIC_ORIGIN` to its exact HTTPS origin with no trailing slash. Set `BETTER_AUTH_SECRET` and `INTERNAL_AUTH_KEY` to different, persistent random values of at least 32 bytes. Set `MAIL_FROM`, SMTP host, port, authentication, and TLS options for your mail service. Provide these values securely to Compose.
+- [Deploy on a VPS](#deploy-on-a-vps) with Docker Compose and an existing HTTPS proxy.
+- [Deploy to Cloudflare](docs/cloudflare.md) using the native Workers deployment guide. The public template button is a release deliverable. Local Wrangler validation and hosted qualification are tracked separately.
+
+### Deploy on a VPS
+
+Set `PUBLIC_ORIGIN` in `.env` to your exact HTTPS origin with no trailing slash. Set `BETTER_AUTH_SECRET` and `INTERNAL_AUTH_KEY` to different, persistent random values of at least 32 bytes. Set `MAIL_FROM`, SMTP host, port, authentication, and TLS options for your mail service. Provide these values securely to Compose.
 
 ```sh
 docker compose up -d --build
-docker compose logs --follow web worker auth
+docker compose logs --follow worker auth
 ```
 
-Caddy serves the SPA and proxies the API and WebSocket on the same origin. The public ports are 80 and 443. The workerd and auth services are private to Compose. The auth service applies migrations before it starts listening. For local Compose TLS previews, use `PUBLIC_HOST=localhost` and `PUBLIC_ORIGIN=https://localhost` with a trusted Caddy local CA.
+Clausid runs two Compose services. The Worker serves the SPA, API, and WebSocket on the loopback port `8787` (`CLAUSID_HTTP_PORT` overrides the host port). Better Auth remains on the Compose network and applies migrations before it starts listening. Your existing proxy terminates HTTPS and proxies all requests, including WebSocket upgrades, to the Worker.
+
+See the [host Caddy example](deploy/Caddyfile). Any proxy must overwrite `X-Clausid-Client-IP` using the trusted client address and forward WebSocket upgrades. For Cloudflare Tunnel, run `cloudflared` on the host and point it to the dedicated loopback proxy listener in the example. Keep that listener private so external callers cannot supply their own Cloudflare client IP. The browser still uses the public HTTPS origin.
+
+For an existing Compose installation, stop the old services, archive both SQLite volumes, and configure the host proxy before starting the new release. Run `docker compose up -d --build --remove-orphans` in the same Compose project. Retain the old release, proxy configuration, public origin, secrets, and named volumes. Run the [workspace ownership audit](docs/vps-to-cloudflare.md#audit-workspace-ownership-before-upgrading) on a copy before upgrading. Rehearse rollback on a copy. To roll back, stop the new stack and start the old release with its original configuration and project name.
 
 Monitor `/healthz`, and exercise authenticated contract listing from a staging account to verify SQLite and auth. Monitor service logs for `Contract invitation delivery failed`, `Authentication or mail operation failed`, and `Clausid request failed`. Run the signing workflow in staging after changes to the runtime, mail delivery, auth, or PDF rendering.
 
@@ -65,6 +74,18 @@ Monitor `/healthz`, and exercise authenticated contract listing from a staging a
 3. Sign in as an existing account, confirm the dashboard and drafts, and download sample completed evidence. Compare the SHA-256 digest of each restored PDF with the recorded digest. Resume traffic after these checks pass.
 
 The self-host target uses workerd's local-disk Durable Object storage. Keep a single workerd process per storage volume and qualify runtime upgrades against a copy of the data.
+
+### Verify backups and signing evidence with Rust
+
+Build with `(cd packages/ops && cargo build --locked --release)` to use the pinned Rust toolchain. Run the following with `packages/ops/target/release` on your PATH.
+
+```sh
+clausid-ops backup manifest auth.tar contracts.tar > backup.json
+clausid-ops backup verify backup.json auth.tar contracts.tar
+clausid-ops evidence verify evidence.zip
+```
+
+Keep the backup manifest or PDF digest in a separately trusted location when you need to detect replacement. Matching hashes show consistency with the supplied manifest. Exercise restore and recheck a known signed artifact before relying on a backup.
 
 ## License
 

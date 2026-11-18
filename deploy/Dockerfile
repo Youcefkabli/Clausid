@@ -23,8 +23,4 @@ FROM build AS runtime
 RUN mkdir -p /var/lib/clausid/auth /var/lib/clausid/contracts && chown -R node:node /var/lib/clausid
 USER node
 
-FROM caddy:2.10.2-alpine AS web
-COPY --from=build /app/apps/web/dist /srv
-COPY deploy/Caddyfile /etc/caddy/Caddyfile
-
 FROM runtime AS pdf
