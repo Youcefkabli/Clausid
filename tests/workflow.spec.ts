@@ -66,6 +66,12 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await first.getByRole('checkbox', { name: /I understand/ }).check()
     await first.getByRole('button', { name: 'Create workspace', exact: true }).click()
     await expect(first.getByRole('img', { name: 'Page 1' })).toBeVisible()
+    const firstSheet = first.getByRole('group', { name: 'PDF page 1', exact: true })
+    const secondSheet = first.getByRole('group', { name: 'PDF page 2', exact: true })
+    await expect(firstSheet).toHaveCSS('border-bottom-style', 'solid')
+    const firstBounds = await firstSheet.boundingBox()
+    const secondBounds = await secondSheet.boundingBox()
+    expect(secondBounds!.y - (firstBounds!.y + firstBounds!.height)).toBeGreaterThan(8)
     const initialContract = new URL(first.url()).pathname
     await first.goto('/?workspaceSlug=' + slug)
     await expect(first.getByRole('heading', { name: 'Demo workspace' })).toBeVisible()

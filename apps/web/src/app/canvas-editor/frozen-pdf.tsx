@@ -10,7 +10,15 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
-const styles = stylex.create({ page: { display: 'block', width: '100%', height: 'auto' } })
+const styles = stylex.create({
+  sheet: {
+    boxShadow: 'var(--shadow-med)',
+    borderWidth: 'var(--border-width)',
+    borderStyle: 'solid',
+    borderColor: 'var(--color-border)',
+  },
+  page: { display: 'block', width: '100%', height: 'auto' },
+})
 
 function PdfPage({ document, number, pageAnchors }: { document: PDFDocumentProxy; number: number; pageAnchors: boolean }) {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -49,7 +57,7 @@ function PdfPage({ document, number, pageAnchors }: { document: PDFDocumentProxy
     }
   }, [document, number])
 
-  return <VStack id={pageAnchors ? 'contract-pdf-page-' + number : undefined} role="group" aria-label={`PDF page ${number}`} aria-busy={!loaded && !failed}>
+  return <VStack xstyle={styles.sheet} id={pageAnchors ? 'contract-pdf-page-' + number : undefined} role="group" aria-label={`PDF page ${number}`} aria-busy={!loaded && !failed}>
     {failed ? <Banner status="error" title={`Page ${number} could not be displayed.`} />
       : <canvas {...stylex.props(styles.page)} ref={canvas} width={612} height={792} role="img" aria-label={`Page ${number}`} />}
     {text && <VisuallyHidden as="p">{text}</VisuallyHidden>}
@@ -71,7 +79,7 @@ export default function FrozenPdf({ url, label = 'Frozen contract PDF', pageAnch
   if (failed) return <Banner status="error" title="Could not display the frozen PDF."
     description="Use Export to open the PDF in a new tab." />
   if (!document) return <Text role="status">Loading PDF…</Text>
-  return <VStack gap={4} role="group" aria-label={label}>
+  return <VStack gap={8} role="group" aria-label={label}>
     {Array.from({ length: document.numPages }, (_, index) =>
       <PdfPage key={index} document={document} number={index + 1} pageAnchors={pageAnchors} />)}
   </VStack>

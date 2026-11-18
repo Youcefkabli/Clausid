@@ -691,7 +691,7 @@ const styles = stylex.create({
   // box, the max-content sizing and the 100% floor on the block axis — says
   // itself in props.
   canvasStage: {minWidth: '100%'},
-  artboardCentered: {margin: 'auto'},
+  artboardCentered: (zoom: number) => ({margin: 'auto', zoom}),
   // Concentric corners. The card rounds to --radius-container and holds one
   // spacing step of padding, so the controls inside it round to the
   // difference: an inner corner struck from the same centre as the outer one
@@ -1965,18 +1965,19 @@ export default function CanvasEditor({
                               minHeight="100%"
                               xstyle={styles.canvasStage}>
                               <Theme theme={neutralTheme} mode="light">
-                                <Card
-                                  padding={0}
-                                  elevation="med"
+                                <VStack
+                                  as="article"
+                                  aria-label="Contract artboard"
+                                  ref={artboard}
+                                  tabIndex={frozen ? -1 : undefined}
                                   width={FRAME.width}
-                                  minHeight={FRAME.height}
-                                  style={{zoom: scale}}
-                                  xstyle={styles.artboardCentered}>
-                                  <article aria-label="Contract artboard" className="canvas-contract-text"
-                                    ref={artboard} tabIndex={frozen ? -1 : undefined}>
-                                    {frozen ? frozen.pdf : <EditorContent editor={contractEditor} />}
-                                  </article>
-                                </Card>
+                                  xstyle={styles.artboardCentered(scale)}>
+                                  {frozen ? frozen.pdf : (
+                                    <Card padding={0} elevation="med" minHeight={FRAME.height}>
+                                      <EditorContent className="canvas-contract-text" editor={contractEditor} />
+                                    </Card>
+                                  )}
+                                </VStack>
                               </Theme>
                             </HStack>
                           </LayoutContent>
