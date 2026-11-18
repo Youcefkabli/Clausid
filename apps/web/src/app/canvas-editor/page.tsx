@@ -2,10 +2,12 @@
 
 'use client';
 
+import type { MarkupControls } from './pdf-markup.tsx';
+
 import { useCallback, useEffect, useRef, useState, type SVGProps} from 'react';
 import * as stylex from '@stylexjs/stylex';
 
-import {EditorContent, useEditor} from '@tiptap/react';
+import {EditorContent, useEditor, useEditorState} from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
@@ -60,6 +62,11 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Baseline,
+  Bold,
+  Brush,
+  Highlighter,
+  MousePointer2,
+  PenTool,
   CaseLower,
   CaseSensitive,
   CaseUpper,
@@ -86,9 +93,11 @@ import {
   PanelRight,
   PanelTopBottomDashed,
   Redo2,
+  Replace,
   RotateCcw,
   RotateCw,
   Scan,
+  Signature,
   SquareSquare,
   SquareRoundCorner,
   Strikethrough,
@@ -691,6 +700,7 @@ const styles = stylex.create({
   // itself in props.
   canvasStage: {minWidth: '100%'},
   artboardCentered: (zoom: number) => ({margin: 'auto', zoom}),
+  headerTools: {overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none'},
   // A vertical Divider is `height: 100%`, and a flex row that centres its
   // items gives a percentage height nothing to resolve against — the rule
   // collapses to nothing and the tool bar loses its groups. Stretching the
@@ -1554,13 +1564,14 @@ type LiveDocument = {
   frozen?: {pdf: React.ReactNode; exportActions: React.ReactNode};
   onAnnotations?: () => void;
   onShare?: () => void;
-  onPrepare?: () => void;
-  canPrepare: boolean;
+  onReplaceText?: () => void;
+  markup?: MarkupControls;
+  signatureAction: {label: string; open?: () => void};
   onAccountSettings: () => void;
 };
 
 export default function CanvasEditor({
-  title, document, awareness, name, editable, syncStatus, frozen, onAnnotations, onShare, onPrepare, canPrepare, onAccountSettings, renderShell,
+  title, document, awareness, name, editable, syncStatus, frozen, onAnnotations, onShare, onReplaceText, signatureAction, markup, onAccountSettings, renderShell,
 }: LiveDocument) {
   const narrow = useMediaQuery('(max-width: 900px)');
   const compactHeader = useMediaQuery('(max-width: 640px)');
@@ -1575,6 +1586,10 @@ export default function CanvasEditor({
     editable: editable,
   }, [document, awareness, name]);
   useEffect(() => { contractEditor?.setEditable(editable); }, [contractEditor, editable]);
+  const marks = useEditorState({
+    editor: contractEditor,
+    selector: ({editor}) => ({bold: editor?.isActive('bold'), italic: editor?.isActive('italic'), underline: editor?.isActive('underline'), strike: editor?.isActive('strike')}),
+  });
   const [layers, setLayers] = useState(INITIAL_LAYERS);
   const [selectedID, setSelectedID] = useState('headline');
   const layerReveal = useContainerReveal();
@@ -1817,19 +1832,45 @@ export default function CanvasEditor({
       </HStack>
     ),
     tools: chrome.toolbar && (
-      <HStack height="var(--spacing-8)" width="max-content" vAlign="center">
+      <HStack role="group" aria-label="Editor tools" height="var(--spacing-8)" width="max-content" maxWidth="100%" xstyle={styles.headerTools} vAlign="center">
         <Toolbar label="Canvas tools" size="sm" startContent={<>
           <IconButton label="Undo" tooltip="Undo" variant="ghost" icon={<Icon icon={Undo2} size={ICON} />}
-            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().undo().run()} />
+            isDisabled={markup ? !markup.undo : !editable} onClick={markup ? markup.undo : () => contractEditor?.chain().focus().undo().run()} />
           <IconButton label="Redo" tooltip="Redo" variant="ghost" icon={<Icon icon={Redo2} size={ICON} />}
-            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().redo().run()} />
+            isDisabled={markup ? !markup.redo : !editable} onClick={markup ? markup.redo : () => contractEditor?.chain().focus().redo().run()} />
           <Divider orientation="vertical" xstyle={styles.toolBarRule} />
-          <IconButton label="Add frame" tooltip="Add frame" variant="ghost" isDisabled
-            icon={<Icon icon={Frame} size={ICON} />} />
-          <IconButton label="Add text" tooltip="Add text" variant="ghost" icon={<Icon icon={Type} size={ICON} />}
-            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().run()} />
-          <IconButton label="Add image" tooltip="Add image" variant="ghost" isDisabled
-            icon={<Icon icon={ImageIcon} size={ICON} />} />
+          {markup && <>
+            {([
+              ['select', 'Select', MousePointer2], ['pen', 'Pen', PenTool], ['brush', 'Brush', Brush],
+              ['highlight', 'Highlighter', Highlighter], ['underline', 'Underline', Underline],
+              ['strikethrough', 'Strikethrough', Strikethrough],
+            ] as const).map(([tool, label, icon]) => <IconButton key={tool} label={label} tooltip={label}
+              icon={<Icon icon={icon} size={ICON} />} aria-pressed={markup.tool === tool}
+              variant={markup.tool === tool ? 'secondary' : 'ghost'}
+              isDisabled={tool !== 'select' && !markup.writable} onClick={() => markup.setTool(tool)} />)}
+          </>}
+          {!frozen && <>
+            <IconButton label="Add text" tooltip="Add text" variant="ghost" icon={<Icon icon={Type} size={ICON} />}
+              isDisabled={!editable} onClick={() => contractEditor?.chain().focus().run()} />
+            <IconButton label="Bold" tooltip="Bold" aria-pressed={Boolean(marks?.bold)}
+              variant={marks?.bold ? 'secondary' : 'ghost'} icon={<Icon icon={Bold} size={ICON} />}
+              isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBold().run()} />
+            <IconButton label="Italic" tooltip="Italic" aria-pressed={Boolean(marks?.italic)}
+              variant={marks?.italic ? 'secondary' : 'ghost'} icon={<Icon icon={Italic} size={ICON} />}
+              isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleItalic().run()} />
+            <IconButton label="Underline" tooltip="Underline" aria-pressed={Boolean(marks?.underline)}
+              variant={marks?.underline ? 'secondary' : 'ghost'} icon={<Icon icon={Underline} size={ICON} />}
+              isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleUnderline().run()} />
+            <IconButton label="Strikethrough" tooltip="Strikethrough" aria-pressed={Boolean(marks?.strike)}
+              variant={marks?.strike ? 'secondary' : 'ghost'} icon={<Icon icon={Strikethrough} size={ICON} />}
+              isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleStrike().run()} />
+          </>}
+          {onAnnotations && <IconButton label="Annotations" tooltip="Annotations" variant="ghost"
+            icon={<Icon icon={MessageSquare} size={ICON} />} onClick={onAnnotations} />}
+          {onReplaceText && <IconButton label="Propose text replacement" tooltip="Propose text replacement" variant="ghost"
+            icon={<Icon icon={Replace} size={ICON} />} onClick={onReplaceText} />}
+          <IconButton label="Signature" tooltip={signatureAction.label} variant="ghost" icon={<Icon icon={Signature} size={ICON} />}
+            isDisabled={!signatureAction.open} onClick={signatureAction.open} />
           <Divider orientation="vertical" xstyle={styles.toolBarRule} />
           <Selector label="Zoom" isLabelHidden variant="ghost" value={zoom}
             onChange={setZoom} options={ZOOM_OPTIONS} placement="below" />
@@ -1841,14 +1882,14 @@ export default function CanvasEditor({
         {syncStatus && (compactHeader
           ? <VisuallyHidden as="span" role="status">{syncStatus}</VisuallyHidden>
           : <Text type="supporting" color="secondary" role="status">{syncStatus}</Text>)}
-        {onAnnotations && <IconButton label="Annotations" tooltip="Annotations" variant="ghost" size="sm"
+        {!chrome.toolbar && onAnnotations && <IconButton label="Annotations" tooltip="Annotations" variant="ghost" size="sm"
           icon={<Icon icon={MessageSquare} size="sm" />} onClick={onAnnotations} />}
         <DropdownMenu button={{label: 'Export', variant: 'ghost', size: 'sm',
           isIconOnly: compactHeader, tooltip: compactHeader ? 'Export' : undefined,
           icon: <Icon icon={Download} size={ICON} />}} alignment="end">
           {frozen ? frozen.exportActions : <>
             <DropdownMenuItem label="Share" isDisabled={!onShare} onClick={onShare} />
-            <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare || !onPrepare} onClick={onPrepare} />
+            <DropdownMenuItem label={signatureAction.label} isDisabled={!signatureAction.open} onClick={signatureAction.open} />
           </>}
         </DropdownMenu>
       </HStack>

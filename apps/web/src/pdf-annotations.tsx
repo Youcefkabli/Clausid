@@ -13,17 +13,18 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { api, errorMessage } from './api.ts'
 import type { ContractView, PdfAnnotationChange, PdfTextBlock } from '@clausid/contracts'
 
-export function PdfAnnotations({ contract, open, onOpenChange, save, busy, error }: {
+export function PdfAnnotations({ contract, open, onOpenChange, propose, setPropose, save, busy, error }: {
   contract: ContractView
   open: boolean
   onOpenChange: (open: boolean) => void
+  propose: boolean
+  setPropose: (enabled: boolean) => void
   save: (change: PdfAnnotationChange) => Promise<unknown>
   busy: boolean
   error: string
 }) {
   const [page, setPage] = useState('1')
   const [text, setText] = useState('')
-  const [propose, setPropose] = useState(false)
   const [block, setBlock] = useState('')
   const [expected, setExpected] = useState('')
   const [replacement, setReplacement] = useState('')
@@ -109,8 +110,8 @@ export function PdfAnnotations({ contract, open, onOpenChange, save, busy, error
         </VStack>
       </form>}
       <Heading level={3}>Negotiation history</Heading>
-      {!contract.annotations?.length && <Text color="secondary">No annotations yet.</Text>}
-      {contract.annotations?.map(annotation => <VStack key={annotation.id} gap={2}>
+      {!contract.annotations?.filter(item => !item.withdrawn).length && <Text color="secondary">No annotations yet.</Text>}
+      {contract.annotations?.filter(item => !item.withdrawn).map(annotation => <VStack key={annotation.id} gap={2}>
         <Divider />
         <HStack gap={2} wrap="wrap" vAlign="center">
           <Button label={`View page ${annotation.page}`} size="sm" variant="ghost" onClick={() => viewPage(annotation.page)} />
@@ -121,6 +122,7 @@ export function PdfAnnotations({ contract, open, onOpenChange, save, busy, error
           <Text>Original: {annotation.edit.expected}</Text>
           <Text>Replacement: {annotation.edit.replacement || '(remove text)'}</Text>
         </VStack>}
+        {annotation.markup && <Text>{annotation.markup.tool} annotation</Text>}
         {annotation.text && <Text>{annotation.text}</Text>}
         {annotation.replies.map(item => <VStack key={item.id} gap={0.5} paddingInline={2}>
           <Text type="supporting" color="secondary">{item.author} · {new Date(item.createdAt).toLocaleString()}</Text>

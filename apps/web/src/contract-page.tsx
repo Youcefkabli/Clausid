@@ -1,3 +1,4 @@
+import type { MarkupTool, MarkupControls } from './app/canvas-editor/pdf-markup.tsx'
 import { PdfAnnotations } from './pdf-annotations.tsx'
 import { AccountSettingsDialog } from './account-settings.tsx'
 import CanvasEditor from './app/canvas-editor/page.tsx'
@@ -45,12 +46,15 @@ export function ContractPage({ id, account, store, renderPage }: {
   const [error, setError] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
   const [annotationsOpen, setAnnotationsOpen] = useState(false)
+  const [proposeReplacement, setProposeReplacement] = useState(false)
   const [share, setShare] = useState(false)
   const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string; canManage: boolean }>()
   const [prepare, setPrepare] = useState(false)
   const [signaturesOpen, setSignaturesOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
   const [preview, setPreview] = useState<(Preview & { signers: string[] }) | null>(null)
+  const [markupTool, setMarkupTool] = useState<MarkupTool>('select')
+  const [redoMarks, setRedoMarks] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
@@ -142,7 +146,7 @@ export function ContractPage({ id, account, store, renderPage }: {
   const draft = contract.status === 'Draft'
   const owner = contract.role === 'owner'
   const canManage = owner && sharingAccess?.canManage
-  const canPrepare = canManage && !contract.annotations?.some(annotation => !annotation.decision) && connection.ready && !connection.error && connection.pending === 0
+  const canPrepare = canManage && !contract.annotations?.some(annotation => !annotation.withdrawn && !annotation.decision) && connection.ready && !connection.error && connection.pending === 0
   const canEdit = draft && !contract.sourcePdf && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => { setError(''); setNotice(''); set(true) }
@@ -154,6 +158,7 @@ export function ContractPage({ id, account, store, renderPage }: {
   const dialogs = <>
     {contract.sourcePdf && contract.role !== 'signer' && <PdfAnnotations contract={contract}
       open={annotationsOpen && !connection.ended} onOpenChange={open => { setAnnotationsOpen(open); setError('') }}
+      propose={proposeReplacement} setPropose={setProposeReplacement}
       save={change => mutate('annotation', change)} busy={busy} error={error} />}
     <Dialog isOpen={share && draft && !connection.ended} onOpenChange={(open) => { setShare(open); if (!open) setError('') }} aria-label="Share contract">
       <div className="flow"><Heading level={2}>Share contract</Heading>
@@ -279,21 +284,43 @@ export function ContractPage({ id, account, store, renderPage }: {
 
   const negotiated = contract.negotiatedPdf
   const draftPdfPath = negotiated ? 'negotiated-pdf/' + negotiated.digest : 'source-pdf'
+  const annotations = contract.annotations ?? []
+  const writableMarks = Boolean(draft && contract.sourcePdf && contract.role !== 'signer' && connection.ready && !connection.error && !busy)
+  const undoMark = annotations.filter(item => item.markup && !item.withdrawn && !item.decision && item.author === account.email).at(-1)
+  const redoMark = annotations.find(item => item.id === redoMarks.at(-1) && item.withdrawn && !item.decision)
+  const markup: MarkupControls | undefined = contract.sourcePdf ? {
+    tool: markupTool, setTool: setMarkupTool, annotations, writable: writableMarks, busy,
+    add: async (page, mark) => {
+      const result = await mutate('annotation', { action: 'add', page, text: '', markup: mark })
+      if (result) setRedoMarks([])
+      return result
+    },
+    undo: writableMarks && undoMark ? async () => {
+      if (await mutate('annotation', { action: 'visibility', id: undoMark.id, withdrawn: true })) setRedoMarks(current => [...current, undoMark.id])
+    } : undefined,
+    redo: writableMarks && redoMark ? async () => {
+      if (await mutate('annotation', { action: 'visibility', id: redoMark.id, withdrawn: false })) setRedoMarks(current => current.slice(0, -1))
+    } : undefined,
+  } : undefined
   const pdf = (version || contract.sourcePdf) && !connection.ended && <Suspense fallback={<Text role="status">Loading PDF…</Text>}>
     <FrozenPdf key={version?.id ?? negotiated?.digest ?? id} url={file + (version ? 'pdf' : draftPdfPath)}
-      label={version ? undefined : negotiated ? 'Clean negotiated PDF' : 'Contract PDF'} />
+      markup={markup} label={version ? undefined : negotiated ? 'Clean negotiated PDF' : 'Contract PDF'} />
   </Suspense>
+  const canAnnotate = contract.sourcePdf && contract.role !== 'signer' && !connection.ended
+  const signatureAction = draft
+    ? { label: 'Prepare for signing', open: canPrepare && !connection.ended ? () => openModal(setPrepare) : undefined }
+    : { label: version?.canSign ? 'Sign contract' : 'View signatures',
+        open: version && !connection.ended ? () => openModal(setSignaturesOpen) : undefined }
   const exportActions = !connection.ended && <>
     {draft && contract.sourcePdf && <>
       <DropdownMenuItem label="Open PDF in a new tab" href={file + draftPdfPath} target="_blank" />
       {negotiated && <DropdownMenuItem label="Open original PDF" href={file + 'source-pdf'} target="_blank" />}
       <DropdownMenuItem label="Share" isDisabled={!canManage} onClick={() => openModal(setShare)} />
-      <DropdownMenuItem label="Prepare for signing" isDisabled={!canPrepare} onClick={() => openModal(setPrepare)} />
+      <DropdownMenuItem label={signatureAction.label} isDisabled={!signatureAction.open} onClick={signatureAction.open} />
     </>}
     {version && <>
       <DropdownMenuItem label="Open PDF in a new tab" href={file + 'pdf'} target="_blank" />
-      <DropdownMenuItem label={version.canSign ? 'Sign contract' : 'View signatures'}
-        onClick={() => openModal(setSignaturesOpen)} />
+      <DropdownMenuItem label={signatureAction.label} onClick={signatureAction.open} />
     </>}
     {contract.status === 'Signed' && <DropdownMenuItem label="Download signing evidence" href={file + 'evidence'} />}
     {owner && contract.status === 'Awaiting signatures' &&
@@ -310,11 +337,14 @@ export function ContractPage({ id, account, store, renderPage }: {
     syncStatus={draft && !connection.ended
       ? (!connection.ready ? 'Reconnecting…' : connection.pending ? 'Saving changes…' : 'Saved')
       : contract.status}
-    onAnnotations={contract.sourcePdf && contract.role !== 'signer' && !connection.ended
-      ? () => openModal(setAnnotationsOpen) : undefined}
+    onAnnotations={canAnnotate ? () => openModal(setAnnotationsOpen) : undefined}
+    onReplaceText={canAnnotate && draft ? () => {
+      setProposeReplacement(true)
+      openModal(setAnnotationsOpen)
+    } : undefined}
     onShare={draft && canManage && !connection.ended ? () => openModal(setShare) : undefined}
-    onPrepare={draft && canManage && !connection.ended ? () => openModal(setPrepare) : undefined}
-    canPrepare={Boolean(canPrepare)}
+    signatureAction={signatureAction}
+    markup={markup}
     onAccountSettings={() => setAccountOpen(true)}
     renderShell={renderCanvas} />
 }

@@ -1,4 +1,5 @@
-import { PDFDocument, rgb } from 'pdf-lib'
+import type { PdfAnnotation } from '@clausid/contracts'
+import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { Doc } from 'yjs'
@@ -100,4 +101,34 @@ export async function renderPdf(title: string, draft: Doc) {
   pdf.getPages().forEach((item, index) =>
     item.drawText(`${index + 1} / ${pdf.getPageCount()}`, { x: 62, y: 35, font: fonts[0], size: 9, color: ink }))
   return new Uint8Array(await pdf.save())
+}
+
+
+// Coordinates use the displayed crop box so drawings follow rotated PDF pages.
+export async function applyPdfMarkup(bytes: Uint8Array, annotations: PdfAnnotation[]) {
+  const marks = annotations.filter(item => item.markup)
+  if (!marks.length) return bytes
+  const pdf = await PDFDocument.load(bytes)
+  for (const annotation of marks) {
+    const page = pdf.getPage(annotation.page - 1)
+    const { x, y, width, height } = page.getCropBox()
+    const rotation = ((page.getRotation().angle % 360) + 360) % 360
+    const point = (p: { x: number; y: number }) => {
+      switch (rotation) {
+        case 90: return { x: x + p.y * width, y: y + p.x * height }
+        case 180: return { x: x + (1 - p.x) * width, y: y + p.y * height }
+        case 270: return { x: x + (1 - p.y) * width, y: y + (1 - p.x) * height }
+        default: return { x: x + p.x * width, y: y + (1 - p.y) * height }
+      }
+    }
+    const mark = annotation.markup!
+    const thickness = mark.tool === 'highlight' ? 12 : mark.tool === 'brush' ? 6 : 1.5
+    for (let i = 1; i < mark.points.length; i++) {
+      page.drawLine({ start: point(mark.points[i - 1]), end: point(mark.points[i]),
+        thickness: thickness * Math.min(width, height) / 612,
+        color: mark.tool === 'highlight' ? rgb(1, 0.8, 0) : rgb(0.12, 0.22, 0.42),
+        opacity: mark.tool === 'highlight' ? 0.3 : 1, lineCap: LineCapStyle.Round })
+    }
+  }
+  return pdf.save()
 }

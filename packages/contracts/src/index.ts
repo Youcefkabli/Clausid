@@ -93,15 +93,24 @@ const pdfReplacement = z.object({
 export type PdfTextBlock = { page: number; block: number; text: string }
 export type PdfTextEdit = z.infer<typeof pdfReplacement> & { page: number; offset: number }
 
+export const pdfMarkup = z.object({
+  tool: z.enum(['pen', 'brush', 'highlight', 'underline', 'strikethrough']),
+  points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(2).max(256),
+})
+export type PdfMarkup = z.infer<typeof pdfMarkup>
+
 export const pdfAnnotationAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('add'), page: z.number().int().positive(), text: z.string().trim().max(800),
-    replacement: pdfReplacement.optional() }).refine(change => change.text || change.replacement, 'Enter an annotation or a replacement.'),
+    replacement: pdfReplacement.optional(), markup: pdfMarkup.optional() }).refine(change => change.text || change.replacement || change.markup, 'Enter an annotation or a replacement.'),
+  z.object({ action: z.literal('visibility'), id: identifier, withdrawn: z.boolean() }),
   z.object({ action: z.literal('reply'), id: identifier, text: z.string().trim().min(1).max(800) }),
   z.object({ action: z.literal('decide'), id: identifier, decision: z.enum(['Approved', 'Rejected']) }),
 ])
 export type PdfAnnotationChange = z.input<typeof pdfAnnotationAction>
 export type PdfAnnotation = {
   id: string; page: number; text: string; author: string; createdAt: string
+  markup?: PdfMarkup
+  withdrawn?: boolean
   edit?: PdfTextEdit
   replies: { id: string; text: string; author: string; createdAt: string }[]
   decision?: { status: 'Approved' | 'Rejected'; author: string; at: string }

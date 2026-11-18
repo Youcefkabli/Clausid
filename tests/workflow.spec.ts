@@ -73,6 +73,36 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     const artboard = first.getByRole('article', { name: 'Contract artboard' })
     await expect(headerTools).toContainText('100%')
     await expect(artboard).toHaveCSS('zoom', '1')
+    const sourceApi = '/api' + new URL(first.url()).pathname
+    const drawing = first.getByRole('img', { name: 'Drawing annotations on sheet 1', exact: true })
+    await expect(drawing).toBeVisible()
+    for (const label of ['Pen', 'Brush', 'Highlighter', 'Underline', 'Strikethrough']) {
+      await headerTools.getByRole('button', { name: label, exact: true }).click()
+      const bounds = (await drawing.boundingBox())!
+      await first.mouse.move(bounds.x + 100, bounds.y + 100)
+      await first.mouse.down()
+      await first.mouse.move(bounds.x + 170, bounds.y + 110, { steps: 5 })
+      await first.mouse.up()
+      await expect.poll(async () => (await first.request.get(sourceApi).then(r => r.json())).annotations.length).toBe(
+        ['Pen', 'Brush', 'Highlighter', 'Underline', 'Strikethrough'].indexOf(label) + 1)
+    }
+    await headerTools.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect.poll(async () => (await first.request.get(sourceApi).then(r => r.json())).annotations.at(-1).withdrawn).toBe(true)
+    await headerTools.getByRole('button', { name: 'Redo', exact: true }).click()
+    await expect.poll(async () => (await first.request.get(sourceApi).then(r => r.json())).annotations.at(-1).withdrawn).toBe(false)
+    await first.reload()
+    await expect(drawing).toBeVisible()
+    const drawings = (await first.request.get(sourceApi).then(r => r.json())).annotations
+    expect(drawings.map((item: { markup: { tool: string } }) => item.markup.tool)).toEqual(['pen', 'brush', 'highlight', 'underline', 'strikethrough'])
+    for (const item of drawings) {
+      expect((await post(first.request, sourceApi + '/annotation', { action: 'decide', id: item.id, decision: 'Approved' })).status()).toBe(200)
+    }
+    const markedView = await first.request.get(sourceApi).then(r => r.json())
+    const markedPdf = await first.request.get(sourceApi + '/negotiated-pdf/' + markedView.negotiatedPdf.digest)
+    expect(markedPdf.status()).toBe(200)
+    expect((await markedPdf.body()).equals(workspacePdf)).toBe(false)
+    expect((await post(first.request, sourceApi + '/annotation', { action: 'visibility', id: drawings[0].id, withdrawn: true })).status()).toBe(409)
+    await expect(first.getByRole('group', { name: 'PDF page 1', exact: true })).toHaveAttribute('aria-busy', 'false')
     await headerTools.getByRole('combobox', { name: 'Zoom' }).click()
     await first.getByRole('option', { name: '60%', exact: true }).click()
     await expect(artboard).toHaveCSS('zoom', '0.6')
@@ -114,7 +144,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       await first.setViewportSize({ width, height: desktopViewport.height })
       await expect(headerTools).toBeVisible()
       await expect.poll(() => headerTools.evaluate(element => {
-        const bounds = element.getBoundingClientRect()
+        const bounds = element.closest('[aria-label="Editor tools"]')!.getBoundingClientRect()
         return Math.abs((bounds.left + bounds.right - innerWidth) / 2)
       })).toBeLessThan(8)
       await expect(appHeader).toHaveCSS('height', '36px')
@@ -134,6 +164,17 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await expect(first.getByRole('toolbar', { name: 'Canvas tools' })).toBeVisible()
     await expect(first.locator('article[aria-label="Contract artboard"]').getByRole('textbox', { name: 'Contract document' })).toHaveCount(1)
     await expect(first.getByRole('button', { name: 'Template preview', exact: true })).toHaveCount(0)
+    const textEditor = first.getByRole('textbox', { name: 'Contract document' })
+    await textEditor.press('End')
+    for (const [label, tag] of [['Bold', 'strong'], ['Italic', 'em'], ['Underline', 'u'], ['Strikethrough', 's']]) {
+      const tool = headerTools.getByRole('button', { name: label, exact: true })
+      await tool.click()
+      await expect(tool).toHaveAttribute('aria-pressed', 'true')
+      await first.keyboard.insertText(label)
+      await expect(textEditor.locator(tag)).toContainText(label)
+      await tool.click()
+      await expect(tool).toHaveAttribute('aria-pressed', 'false')
+    }
     const contractPath = new URL(first.url()).pathname
     const apiPath = '/api' + contractPath
     expect((await second.request.get(origin + apiPath)).status()).toBe(404)
@@ -186,8 +227,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await expect.poll(() => draftText(secondEditor)).toContain('Updated clause.')
     expect((await post(first.request, apiPath + '/freeze', { previewId: oldPreview.id })).status()).toBe(409)
 
-    await first.getByRole('button', { name: 'Export', exact: true }).click()
-    await first.getByRole('menuitem', { name: 'Prepare for signing', exact: true }).click()
+    await headerTools.getByRole('button', { name: 'Signature', exact: true }).click()
     await first.getByLabel('Signer email addresses').fill([ownerEmail, editorEmail].join('\n'))
     await first.getByRole('button', { name: 'Generate PDF preview' }).click()
     const previewLink = first.getByRole('link', { name: 'Open preview in a new tab' })
@@ -217,6 +257,11 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await second.getByRole('button', { name: 'Export', exact: true }).click()
     await expect(second.getByRole('menuitem', { name: 'Sign contract' })).toBeVisible()
     await second.keyboard.press('Escape')
+    await second.getByRole('toolbar', { name: 'Canvas tools' }).getByRole('button', { name: 'Signature', exact: true }).click()
+    const signerDialog = second.getByRole('dialog', { name: 'Signatures' })
+    await expect(signerDialog.getByLabel('Full name')).toBeVisible()
+    await expect(signerDialog.getByRole('checkbox')).not.toBeChecked()
+    await signerDialog.getByRole('button', { name: 'Done' }).click()
     await expect(second.getByRole('group', { name: 'Open documents' })).toContainText('Services agreement')
     await expect(second.getByRole('img', { name: 'Page 1' })).toBeVisible()
 
@@ -443,8 +488,9 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await expect(second).toHaveURL(origin + sourcePath)
     await expect(second.getByRole('img', { name: 'Page 1' })).toBeVisible()
 
-    await second.getByRole('button', { name: 'Annotations', exact: true }).click()
-    await second.getByRole('checkbox', { name: 'Propose a text replacement' }).check()
+    await expect(second.getByRole('button', { name: 'Signature', exact: true })).toBeDisabled()
+    await second.getByRole('button', { name: 'Propose text replacement', exact: true }).click()
+    await expect(second.getByRole('checkbox', { name: 'Propose a text replacement' })).toBeChecked()
     await second.getByRole('combobox', { name: 'Source line' }).click()
     await second.getByRole('option', { name: '2. Pay in 15 days', exact: true }).click()
     await second.getByRole('textbox', { name: 'Text to replace' }).fill('15')

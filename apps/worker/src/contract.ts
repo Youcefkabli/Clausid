@@ -10,7 +10,7 @@ import type { Account, Env } from './http.ts'
 import { artifact, decode, encode, hex, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import { authorizedOperation, snapshotObject } from './operations.ts'
 import { validateDraft } from './draft.ts'
-import { renderPdf } from './pdf.ts'
+import { renderPdf, applyPdfMarkup } from './pdf.ts'
 import { inspectPdf, planPdfEdit, rewritePdf } from './pdf-rewrite.ts'
 
 type Member = { id: string; email: string }
@@ -339,7 +339,7 @@ export class Contract extends DurableObject<Env> {
         if (change.page > state.sourcePdf.pages) throw new HttpError(422, 'Choose a page in this PDF.')
         if (annotations.length >= 60) throw new HttpError(422, 'This contract has reached its annotation limit.')
         const annotation: PdfAnnotation = {
-          id: crypto.randomUUID(), page: change.page, text: change.text, author: account.email, createdAt, replies: [],
+          id: crypto.randomUUID(), page: change.page, text: change.text, author: account.email, createdAt, replies: [], markup: change.markup,
         }
         if (change.replacement) {
           const page = change.page - 1
@@ -356,20 +356,27 @@ export class Contract extends DurableObject<Env> {
         const annotation = annotations.find(item => item.id === change.id)
         if (!annotation || annotation.decision) throw new HttpError(409, 'This annotation is no longer open.')
         let updated: PdfAnnotation
-        if (change.action === 'reply') {
+        if (change.action === 'visibility') {
+          if (!annotation.markup || annotation.author !== account.email) throw new HttpError(403, 'Only the author can undo an open drawing.')
+          updated = { ...annotation, withdrawn: change.withdrawn }
+        } else if (change.action === 'reply') {
+          if (annotation.withdrawn) throw new HttpError(409, 'This annotation was withdrawn.')
           if (annotations.reduce((total, item) => total + item.replies.length, 0) >= 120) {
             throw new HttpError(422, 'This contract has reached its reply limit.')
           }
           updated = { ...annotation, replies: [...annotation.replies, { id: crypto.randomUUID(),
             text: change.text, author: account.email, createdAt }] }
         } else {
+          if (annotation.withdrawn) throw new HttpError(409, 'This annotation was withdrawn.')
           if (view.role !== 'owner') throw new HttpError(403, 'Only the contract owner can decide annotations.')
           updated = { ...annotation, decision: { status: change.decision, author: account.email, at: createdAt } }
         }
         next = annotations.map(item => item.id === updated.id ? updated : item)
-        if (change.action === 'decide' && change.decision === 'Approved' && updated.edit) {
-          negotiated = rewritePdf(this.#getSourcePdf(), next.flatMap(item =>
-            item.decision?.status === 'Approved' && item.edit ? [{ id: item.id, edit: item.edit }] : []))
+        if (change.action === 'decide' && change.decision === 'Approved' && (updated.edit || updated.markup)) {
+          const approved = next.filter(item => !item.withdrawn && item.decision?.status === 'Approved')
+          const edits = approved.flatMap(item => item.edit ? [{ id: item.id, edit: item.edit }] : [])
+          const bytes = edits.length ? rewritePdf(this.#getSourcePdf(), edits) : this.#getSourcePdf()
+          negotiated = await applyPdfMarkup(bytes, approved)
           if (negotiated.length > 1_900_000) throw new HttpError(422, 'The negotiated PDF is too large to store.')
         }
       }
@@ -494,7 +501,7 @@ export class Contract extends DurableObject<Env> {
     } else if (action === 'preview') {
       const { revision, signers } = previewContract.parse(await readJson(request))
       if (revision !== state.revision) throw new HttpError(409, 'The draft changed. Review the latest version.')
-      if (state.annotations?.some(annotation => !annotation.decision)) {
+      if (state.annotations?.some(annotation => !annotation.withdrawn && !annotation.decision)) {
         throw new HttpError(409, 'Resolve all PDF annotations before preparing for signature.')
       }
       const bytes = state.negotiatedPdf ? this.#file('negotiated')

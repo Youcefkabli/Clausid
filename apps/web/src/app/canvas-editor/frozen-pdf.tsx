@@ -1,3 +1,4 @@
+import { PdfMarkupLayer, type MarkupControls } from './pdf-markup.tsx'
 import * as stylex from '@stylexjs/stylex'
 import { Banner } from '@astryxdesign/core/Banner'
 import { VStack } from '@astryxdesign/core/Stack'
@@ -12,6 +13,7 @@ GlobalWorkerOptions.workerSrc = workerUrl
 
 const styles = stylex.create({
   sheet: {
+    position: 'relative',
     boxShadow: 'var(--shadow-med)',
     borderWidth: 'var(--border-width)',
     borderStyle: 'solid',
@@ -20,7 +22,7 @@ const styles = stylex.create({
   page: { display: 'block', width: '100%', height: 'auto' },
 })
 
-function PdfPage({ document, number, pageAnchors }: { document: PDFDocumentProxy; number: number; pageAnchors: boolean }) {
+function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocumentProxy; number: number; pageAnchors: boolean; markup?: MarkupControls }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -60,11 +62,12 @@ function PdfPage({ document, number, pageAnchors }: { document: PDFDocumentProxy
   return <VStack xstyle={styles.sheet} id={pageAnchors ? 'contract-pdf-page-' + number : undefined} role="group" aria-label={`PDF page ${number}`} aria-busy={!loaded && !failed}>
     {failed ? <Banner status="error" title={`Page ${number} could not be displayed.`} />
       : <canvas {...stylex.props(styles.page)} ref={canvas} width={612} height={792} role="img" aria-label={`Page ${number}`} />}
+    {loaded && markup && <PdfMarkupLayer page={number} controls={markup} />}
     {text && <VisuallyHidden as="p">{text}</VisuallyHidden>}
   </VStack>
 }
 
-export default function FrozenPdf({ url, label = 'Frozen contract PDF', pageAnchors = true }: { url: string; label?: string; pageAnchors?: boolean }) {
+export default function FrozenPdf({ url, label = 'Frozen contract PDF', pageAnchors = true, markup }: { url: string; label?: string; pageAnchors?: boolean; markup?: MarkupControls }) {
   const [document, setDocument] = useState<PDFDocumentProxy>()
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -81,6 +84,6 @@ export default function FrozenPdf({ url, label = 'Frozen contract PDF', pageAnch
   if (!document) return <Text role="status">Loading PDF…</Text>
   return <VStack gap={8} role="group" aria-label={label}>
     {Array.from({ length: document.numPages }, (_, index) =>
-      <PdfPage key={index} document={document} number={index + 1} pageAnchors={pageAnchors} />)}
+      <PdfPage key={index} document={document} number={index + 1} pageAnchors={pageAnchors} markup={markup} />)}
   </VStack>
 }
