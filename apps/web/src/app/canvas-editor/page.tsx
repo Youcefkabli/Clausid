@@ -31,7 +31,6 @@ import {
   HStack,
   Layout,
   LayoutContent,
-  LayoutFooter,
   LayoutPanel,
   StackItem,
   VStack,
@@ -81,7 +80,7 @@ import {
   Menu,
   MessageSquare,
   Minus,
-  PanelBottom,
+  PanelTop,
   PanelLeft,
   PanelLeftRightDashed,
   PanelRight,
@@ -692,23 +691,6 @@ const styles = stylex.create({
   // itself in props.
   canvasStage: {minWidth: '100%'},
   artboardCentered: (zoom: number) => ({margin: 'auto', zoom}),
-  // Concentric corners. The card rounds to --radius-container and holds one
-  // spacing step of padding, so the controls inside it round to the
-  // difference: an inner corner struck from the same centre as the outer one
-  // rather than a rounder curve cutting across it. Stated as the subtraction
-  // so it still holds if either token moves.
-  toolBarControl: {
-    borderRadius: 'calc(var(--radius-container) - var(--spacing-1))',
-  },
-  // The trailing control is a ghost, so edge compensation pulls it out to the
-  // card's edge to optically align its label. That is the right call when the
-  // control is the only thing in a container, but here it leaves the bar with
-  // a gutter on the left and none on the right. Putting the step back matches
-  // the two ends. It rides on the control itself rather than a wrapper — a
-  // div whose only job is one margin is a div the control can absorb.
-  toolBarTrailing: {
-    marginInlineEnd: 'var(--spacing-2)',
-  },
   // A vertical Divider is `height: 100%`, and a flex row that centres its
   // items gives a percentage height nothing to resolve against — the rule
   // collapses to nothing and the tool bar loses its groups. Stretching the
@@ -1529,7 +1511,12 @@ function ShadowFields({
 // Page
 // =============================================================================
 
-export type CanvasHeader = {start: React.ReactNode; end: React.ReactNode; compact: boolean};
+export type CanvasHeader = {
+  start: React.ReactNode;
+  tools: React.ReactNode;
+  end: React.ReactNode;
+  stackedTools: boolean;
+};
 
 function CanvasDocumentTab({title, compact, onSelect}: {
   title: string;
@@ -1592,7 +1579,7 @@ export default function CanvasEditor({
   const [selectedID, setSelectedID] = useState('headline');
   const layerReveal = useContainerReveal();
   const [panel, setPanel] = useState('layers');
-  const [zoom, setZoom] = useState('0.4');
+  const [zoom, setZoom] = useState('1');
 
   // The picker is presentational here: a template has no upload endpoint to
   // post to, and swapping the artboard for a local object URL would leave the
@@ -1637,7 +1624,7 @@ export default function CanvasEditor({
 
 
   const header: CanvasHeader = {
-    compact: compactHeader,
+    stackedTools: narrow,
     start: (
       <HStack gap={0.5} vAlign="center" xstyle={styles.headerLead}>
         {/*
@@ -1739,7 +1726,7 @@ export default function CanvasEditor({
             />
             <DropdownMenuCheckboxItem
               label="Canvas tools"
-              icon={PanelBottom}
+              icon={PanelTop}
               endContent={<Shortcut>⌘.</Shortcut>}
               value={chrome.toolbar}
               onChange={next =>
@@ -1827,6 +1814,26 @@ export default function CanvasEditor({
             if (frozen) artboard.current?.focus();
             else contractEditor?.commands.focus();
           }} />
+      </HStack>
+    ),
+    tools: chrome.toolbar && (
+      <HStack height="var(--spacing-8)" width="max-content" vAlign="center">
+        <Toolbar label="Canvas tools" size="sm" startContent={<>
+          <IconButton label="Undo" tooltip="Undo" variant="ghost" icon={<Icon icon={Undo2} size={ICON} />}
+            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().undo().run()} />
+          <IconButton label="Redo" tooltip="Redo" variant="ghost" icon={<Icon icon={Redo2} size={ICON} />}
+            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().redo().run()} />
+          <Divider orientation="vertical" xstyle={styles.toolBarRule} />
+          <IconButton label="Add frame" tooltip="Add frame" variant="ghost" isDisabled
+            icon={<Icon icon={Frame} size={ICON} />} />
+          <IconButton label="Add text" tooltip="Add text" variant="ghost" icon={<Icon icon={Type} size={ICON} />}
+            isDisabled={!editable} onClick={() => contractEditor?.chain().focus().run()} />
+          <IconButton label="Add image" tooltip="Add image" variant="ghost" isDisabled
+            icon={<Icon icon={ImageIcon} size={ICON} />} />
+          <Divider orientation="vertical" xstyle={styles.toolBarRule} />
+          <Selector label="Zoom" isLabelHidden variant="ghost" value={zoom}
+            onChange={setZoom} options={ZOOM_OPTIONS} placement="below" />
+        </>} />
       </HStack>
     ),
     end: (
@@ -1949,10 +1956,7 @@ export default function CanvasEditor({
                     <Section variant="muted" padding={0} height="100%">
                       <Layout
                         height="fill"
-                        // Lifts the tool bar off the bottom edge: the footer
-                        // reads this as its outer padding, so the bar floats
-                        // over the backdrop rather than sitting on the sill.
-                        padding={4}
+                        padding={0}
                         content={
                           <LayoutContent padding={narrow ? 2 : 6} isScrollable>
                             {frozen && compactHeader && <VStack gap={1} paddingBlock={2}>
@@ -1981,109 +1985,6 @@ export default function CanvasEditor({
                               </Theme>
                             </HStack>
                           </LayoutContent>
-                        }
-                        footer={
-                          chrome.toolbar ? (
-                            <LayoutFooter>
-                              <Center>
-                                {/* Padding of one step, and the controls
-                                inside round to the card's radius less that
-                                step — see styles.toolBarControl. */}
-                                <Card padding={1} elevation="high">
-                                  <Toolbar
-                                    label="Canvas tools"
-                                    size="sm"
-                                    startContent={
-                                      <>
-                                        <IconButton
-                                          label="Undo"
-                                          tooltip="Undo"
-                                          isDisabled={!editable}
-                                          onClick={() => contractEditor?.chain().focus().undo().run()}
-                                          variant="ghost"
-                                          icon={
-                                            <Icon icon={Undo2} size={ICON} />
-                                          }
-                                          xstyle={styles.toolBarControl}
-                                        />
-                                        <IconButton
-                                          label="Redo"
-                                          tooltip="Redo"
-                                          isDisabled={!editable}
-                                          onClick={() => contractEditor?.chain().focus().redo().run()}
-                                          variant="ghost"
-                                          icon={
-                                            <Icon icon={Redo2} size={ICON} />
-                                          }
-                                          xstyle={styles.toolBarControl}
-                                        />
-                                        <Divider
-                                          orientation="vertical"
-                                          xstyle={styles.toolBarRule}
-                                        />
-                                        <IconButton
-                                          label="Add frame"
-                                          tooltip="Add frame"
-                                          isDisabled
-                                          variant="ghost"
-                                          icon={
-                                            <Icon icon={Frame} size={ICON} />
-                                          }
-                                          xstyle={styles.toolBarControl}
-                                        />
-                                        <IconButton
-                                          label="Add text"
-                                          tooltip="Add text"
-                                          isDisabled={!editable}
-                                          onClick={() => contractEditor?.chain().focus().run()}
-                                          variant="ghost"
-                                          icon={
-                                            <Icon icon={Type} size={ICON} />
-                                          }
-                                          xstyle={styles.toolBarControl}
-                                        />
-                                        <IconButton
-                                          label="Add image"
-                                          tooltip="Add image"
-                                          isDisabled
-                                          variant="ghost"
-                                          icon={
-                                            <Icon
-                                              icon={ImageIcon}
-                                              size={ICON}
-                                            />
-                                          }
-                                          xstyle={styles.toolBarControl}
-                                        />
-                                        <Divider
-                                          orientation="vertical"
-                                          xstyle={styles.toolBarRule}
-                                        />
-                                        <Selector
-                                          label="Zoom"
-                                          isLabelHidden
-                                          variant="ghost"
-                                          value={zoom}
-                                          onChange={setZoom}
-                                          options={ZOOM_OPTIONS}
-                                          placement="above"
-                                          // Fixed so the bar does not reflow
-                                          // as the value changes, and wide
-                                          // enough for the longest option
-                                          // ("100%") to avoid truncation.
-                                          width={92}
-                                          controlXstyle={[
-                                            styles.toolBarControl,
-                                            styles.toolBarTrailing,
-                                          ]}
-                                        />
-                                      </>
-                                    }
-                                  />
-                                </Card>
-                              </Center>
-                            </LayoutFooter>
-                          ) : undefined
                         }
                       />
                     </Section>

@@ -14,6 +14,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { TopNav, TopNavHeading } from '@astryxdesign/core/TopNav'
+import * as stylex from '@stylexjs/stylex'
 import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -55,16 +56,31 @@ if (inviteKey && location.hash) {
   history.replaceState(null, '', location.pathname)
 }
 
+const headerStyles = stylex.create({
+  navigation: {
+    minHeight: 'calc(var(--spacing-8) + var(--spacing-1))',
+    paddingBlock: 'var(--spacing-0-5)',
+  },
+  centered: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)' },
+})
+
 function Frame({ account, children, editorHeader, fillViewport = false }: {
   account?: { name: string; email: string }
   children: ReactNode
   editorHeader?: CanvasHeader
   fillViewport?: boolean
 }) {
+  const inlineTools = editorHeader && !editorHeader.stackedTools && editorHeader.tools
+  const navigation = <TopNav heading={<TopNavHeading heading="Clausid" headingHref="/" />}
+    xstyle={[headerStyles.navigation, inlineTools ? headerStyles.centered : undefined]}
+    startContent={editorHeader?.start}
+    centerContent={inlineTools}
+    endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} />}</>} />
   return <AppShell
-    topNav={<TopNav heading={<TopNavHeading heading="Clausid" headingHref="/" />}
-      startContent={editorHeader?.start}
-      endContent={<>{editorHeader?.end}{account && <AccountSettings account={account} />}</>} />}
+    mobileNav={editorHeader ? false : undefined}
+    topNav={editorHeader?.stackedTools && editorHeader.tools
+      ? <VStack gap={0} hAlign="center" width="100%">{navigation}{editorHeader.tools}</VStack>
+      : navigation}
     contentPadding={0}
   >{editorHeader || fillViewport ? children : <div className="page-content">{children}</div>}</AppShell>
 }

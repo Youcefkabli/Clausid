@@ -37,7 +37,10 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
   const editorEmail = 'editor-' + suffix + '@example.com'
   try {
     await Promise.all([account(first, 'Owner Lee', ownerEmail), account(second, 'Editor Lee', editorEmail)])
+    const appHeader = first.getByRole('navigation', { name: 'Top navigation' })
+    await expect(appHeader).toHaveCSS('height', '36px')
     await first.getByRole('link', { name: 'New workspace', exact: true }).click()
+    await expect(appHeader).toHaveCSS('height', '36px')
     await first.getByRole('button', { name: 'Next', exact: true }).click()
     await expect(first.locator('[data-type=error]').filter({ hasText: 'Enter a workspace name' })).toBeVisible()
     await first.getByLabel('Workspace name').fill('Demo workspace')
@@ -66,6 +69,13 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     await first.getByRole('checkbox', { name: /I understand/ }).check()
     await first.getByRole('button', { name: 'Create workspace', exact: true }).click()
     await expect(first.getByRole('img', { name: 'Page 1' })).toBeVisible()
+    const headerTools = first.getByRole('banner').getByRole('toolbar', { name: 'Canvas tools' })
+    const artboard = first.getByRole('article', { name: 'Contract artboard' })
+    await expect(headerTools).toContainText('100%')
+    await expect(artboard).toHaveCSS('zoom', '1')
+    await headerTools.getByRole('combobox', { name: 'Zoom' }).click()
+    await first.getByRole('option', { name: '60%', exact: true }).click()
+    await expect(artboard).toHaveCSS('zoom', '0.6')
     const firstSheet = first.getByRole('group', { name: 'PDF page 1', exact: true })
     const secondSheet = first.getByRole('group', { name: 'PDF page 2', exact: true })
     await expect(firstSheet).toHaveCSS('border-bottom-style', 'solid')
@@ -89,8 +99,7 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
       name: 'Unassigned workspace', requestId: crypto.randomUUID(), ...workspaceFixture(),
     })
     expect(unassignedWorkspace.status()).toBe(201)
-    const appHeader = first.getByRole('navigation', { name: 'Top navigation' })
-    const originalHeaderHeight = await appHeader.evaluate((element) => element.getBoundingClientRect().height)
+    await expect(appHeader).toHaveCSS('height', '36px')
     await first.getByRole('button', { name: 'Add document' }).click()
     await first.getByLabel('Contract title').fill('Services agreement')
     await first.getByRole('button', { name: 'Create contract', exact: true }).click()
@@ -103,9 +112,12 @@ test('verified users collaborate, freeze an exact PDF, and sign with evidence', 
     const desktopViewport = first.viewportSize()!
     for (const width of [desktopViewport.width, 641, 390, 320]) {
       await first.setViewportSize({ width, height: desktopViewport.height })
-      await expect.poll(() => appHeader.evaluate((element) => element.getBoundingClientRect().height),
-        { message: `App header height at ${width}px` })
-        .toBe(originalHeaderHeight)
+      await expect(headerTools).toBeVisible()
+      await expect.poll(() => headerTools.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        return Math.abs((bounds.left + bounds.right - innerWidth) / 2)
+      })).toBeLessThan(8)
+      await expect(appHeader).toHaveCSS('height', '36px')
       await expect(appHeader.getByRole('button', { name: 'Export', exact: true })).toBeVisible()
       await expect(appHeader.getByRole('button', { name: 'Account settings' })).toBeVisible()
     }
