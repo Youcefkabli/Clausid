@@ -10,10 +10,12 @@ await build({
   target: 'es2023',
   external: ['cloudflare:workers'],
   loader: { '.woff': 'binary' },
-  plugins: [{
-    name: 'workerd-pdf-wasm',
-    setup(build) {
-      build.onResolve({ filter: /pdf_engine_bg\.wasm$/ }, () => ({ path: './pdf_engine_bg.wasm', external: true }))
+  plugins: [
+    {
+      name: 'workerd-pdf-wasm',
+      setup(build) {
+        build.onResolve({ filter: /pdf_engine_bg\.wasm$/ }, () => ({ path: './pdf_engine_bg.wasm', external: true }))
+      },
     },
-  }],
+  ],
 })

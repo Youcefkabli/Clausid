@@ -25,14 +25,18 @@ async function readRequest(request, limit) {
   if (size > limit) {
     throw new RequestError(413, 'limit_exceeded', 'The PDF request is too large.')
   }
-  if (!request.body) throw new RequestError(400, 'invalid_body', 'The PDF request has no body.')
+  if (!request.body) {
+    throw new RequestError(400, 'invalid_body', 'The PDF request has no body.')
+  }
   const bytes = new Uint8Array(size)
   const reader = request.body.getReader()
   let offset = 0
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        break
+      }
       if (value.length > size - offset) {
         await reader.cancel()
         throw new RequestError(400, 'invalid_body', 'The PDF request length does not match.')
@@ -50,7 +54,9 @@ async function readRequest(request, limit) {
 }
 
 function unpack(bytes) {
-  if (bytes.length < 4) throw new RequestError(400, 'invalid_body', 'Missing metadata length.')
+  if (bytes.length < 4) {
+    throw new RequestError(400, 'invalid_body', 'Missing metadata length.')
+  }
   const length = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true)
   if (length > Math.min(maxMetadataBytes, bytes.length - 4) || bytes.length - 4 - length > maxPdfBytes) {
     throw new RequestError(400, 'invalid_body', 'Invalid PDF or metadata length.')
@@ -73,7 +79,7 @@ function responseWithPdf(report, bytes) {
 
 async function digest(bytes) {
   const hash = await crypto.subtle.digest('SHA-256', bytes)
-  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('')
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 let busy = false
@@ -81,11 +87,15 @@ let busy = false
 export default {
   async fetch(request) {
     const path = new URL(request.url).pathname
-    if (request.method === 'GET' && path === '/healthz') return new Response('ok')
+    if (request.method === 'GET' && path === '/healthz') {
+      return new Response('ok')
+    }
     if (request.method !== 'POST' || !['/v1/inspect', '/v1/plan', '/v1/apply'].includes(path)) {
       return new Response('Not found', { status: 404 })
     }
-    if (busy) return Response.json({ code: 'busy' }, { status: 503 })
+    if (busy) {
+      return Response.json({ code: 'busy' }, { status: 503 })
+    }
     busy = true
     try {
       if (path === '/v1/inspect') {
@@ -102,7 +112,7 @@ export default {
       if (!input || typeof input !== 'object' || !/^[a-f0-9]{64}$/.test(input.sourceDigest)) {
         throw new RequestError(400, 'invalid_metadata', 'Expected a source digest.')
       }
-      if (input.sourceDigest !== await digest(bytes)) {
+      if (input.sourceDigest !== (await digest(bytes))) {
         throw new RequestError(409, 'source_mismatch', 'The PDF does not match the expected source.')
       }
       if (path === '/v1/plan') {
@@ -112,11 +122,14 @@ export default {
       const result = apply(bytes, JSON.stringify(input.edits ?? null))
       try {
         const pdf = result.take_pdf()
-        return responseWithPdf(JSON.stringify({
-          sourceDigest: input.sourceDigest,
-          digest: await digest(pdf),
-          applied: JSON.parse(result.report()),
-        }), pdf)
+        return responseWithPdf(
+          JSON.stringify({
+            sourceDigest: input.sourceDigest,
+            digest: await digest(pdf),
+            applied: JSON.parse(result.report()),
+          }),
+          pdf,
+        )
       } finally {
         result.free()
       }

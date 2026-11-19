@@ -1,0 +1,53 @@
+{
+  "description": "Clausid bounded lifecycle and tool guardrails reuse shared verification; changed definitions require personal review.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent/hooks.mts\" codex start",
+            "timeout": 30,
+            "statusMessage": "Recording the Clausid session baseline"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent/hooks.mts\" codex stop",
+            "timeout": 600,
+            "statusMessage": "Checking Clausid changes before completion"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent/toolHooks.mts\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/agent/toolHooks.mts\"",
+            "timeout": 240
+          }
+        ]
+      }
+    ]
+  }
+}

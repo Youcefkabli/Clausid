@@ -1,4 +1,6 @@
 import { ValidationError } from '@clausid/contracts'
+import type { ResponseSchema } from '@clausid/contracts'
+export type { Account } from './records.ts'
 
 export interface Env {
   CONTRACTS: DurableObjectNamespace
@@ -10,14 +12,22 @@ export interface Env {
   PUBLIC_ORIGIN: string
   INTERNAL_AUTH_KEY: string
 }
-export type Account = { id: string; email: string; name: string; createdAt: number; expires: number }
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string) { super(message) }
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message)
+  }
 }
 export async function safeResponse(handler: () => Promise<Response>) {
-  try { return await handler() } catch (error) {
-    if (error instanceof HttpError) return Response.json({ error: error.message }, { status: error.status })
+  try {
+    return await handler()
+  } catch (error) {
+    if (error instanceof HttpError) {
+      return Response.json({ error: error.message }, { status: error.status })
+    }
     if (error instanceof ValidationError || error instanceof SyntaxError) {
       return Response.json({ error: 'Check the information you entered.' }, { status: 400 })
     }
@@ -30,13 +40,23 @@ export async function readJson(request: Request, limit = 16_384) {
     throw new HttpError(415, 'Use application/json.')
   }
   const reader = request.body?.getReader()
-  if (!reader) throw new HttpError(400, 'Request body required.')
+  if (!reader) {
+    throw new HttpError(400, 'Request body required.')
+  }
   const decoder = new TextDecoder()
   let value = ''
   let size = 0
   for (;;) {
-    const { value: chunk, done } = await reader.read()
-    if (done) return JSON.parse(value + decoder.decode()) as unknown
+    const result = await reader.read()
+    const chunk: unknown = result.value,
+      done = result.done
+    if (done) {
+      const data: unknown = JSON.parse(value + decoder.decode())
+      return data
+    }
+    if (!(chunk instanceof Uint8Array)) {
+      throw new HttpError(400, 'Invalid request body chunk.')
+    }
     size += chunk.length
     if (size > limit) {
       await reader.cancel()
@@ -64,14 +84,30 @@ export function hex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 export async function sha256(bytes: Uint8Array) {
-  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.slice().buffer as ArrayBuffer)))
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer)))
 }
 export function artifact(bytes: Uint8Array, contentType: string, filename: string, download: boolean) {
-  return new Response(bytes.slice().buffer as ArrayBuffer, { headers: {
-    'Content-Type': contentType,
-    'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename="${filename}"`,
-    'Cache-Control': 'private, no-store',
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
-  } })
+  return new Response(new Uint8Array(bytes).buffer, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Disposition': `${download ? 'attachment' : 'inline'}; filename="${filename}"`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    },
+  })
+}
+
+export async function serviceResponse<T>(response: Response, schema: ResponseSchema<T>): Promise<T> {
+  let value: unknown
+  try {
+    value = await response.json()
+  } catch {
+    throw new HttpError(503, 'An internal service returned an invalid response.')
+  }
+  const result = schema.safeParse(value)
+  if (!result.success) {
+    throw new HttpError(503, 'An internal service returned an invalid response.')
+  }
+  return result.data
 }

@@ -1,3 +1,4 @@
+// Validate signing inputs and reject duplicate recipients or invalid consent/version/digest bindings.
 import { describe, expect, it } from 'vite-plus/test'
 import { consentVersion, previewContract, signContract } from '../packages/contracts/src/index.ts'
 

@@ -2,6 +2,21 @@
 
 Project-specific guidance for AI coding agents.
 
+Read the root [instructions](../../AGENTS.md), [code map](../../docs/codebase.md), and relevant
+[contract surface](../../docs/contracts.md), [coding standards](../../docs/coding-standards.md) and [collaboration reference](../../docs/collaboration-and-review.md). Preserve existing Astryx template frames.
+Keep HTTP/WebSocket transport separate from UI decisions and server authorization authoritative.
+`pnpm verify` runs the built-output doctor from this package after building. Its warnings are
+reported; exit zero is not proof of responsive, accessible or visually correct behavior.
+Record affected browser workflows and rendered evidence separately. Do not apply these Astryx
+rules to the independent Astro/Lumos website.
+
+Use schema-first API helpers and missing/ready/invalid projection readers. Do not mutate the live
+Y.Doc or acknowledge pending updates before a server frame passes protocol staging. Keep retry
+feedback and unsaved text visible. `definedProps` omits absent optional platform props without
+widening component types; do not use it to evade a required prop.
+
+<!-- prettier-ignore-start -->
+
 <!-- ASTRYX:START -->
 Astryx v0.7.16 · 174 components
 CLI: run every command as `pnpm exec astryx <cmd>` (shown below as `astryx ...`).
@@ -33,3 +48,5 @@ RULES:
   docs authoring     build an integration package, and every field it holds
   upgrade --from <old version> --apply   run after a dependency bump
 <!-- ASTRYX:END -->
+
+<!-- prettier-ignore-end -->

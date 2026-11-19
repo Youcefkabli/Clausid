@@ -1,7 +1,7 @@
 {
+  "name": "@clausid/auth",
   "private": true,
   "type": "module",
-  "name": "@clausid/auth",
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
     "migrate": "node --experimental-strip-types src/migrate.ts"
@@ -9,7 +9,8 @@
   "dependencies": {
     "better-auth": "1.7.25",
     "better-sqlite3": "13.2.0",
-    "nodemailer": "10.5.0"
+    "nodemailer": "10.5.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

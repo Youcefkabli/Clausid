@@ -32,7 +32,6 @@ These are coordinated recovery points within Cloudflare’s retention window. Re
 
 In a recovery rehearsal, run `node scripts/transfer.mjs verify-checkpoint <checkpoint.json>` before making changes after the checkpoint. Cloudflare point-in-time restore requires a hosted test account.
 
-
 ## Audit workspace ownership before upgrading
 
 Keep user ingress blocked and enable the maintenance secret as in the checkpoint procedure. Run `node scripts/transfer.mjs audit-cloud-workspaces <config.json>` using the account and namespace IDs and inventory token. The audit fails on duplicate workspace owners or a mismatch between a sharing object and the account directory. Resolve any conflict before reopening traffic.

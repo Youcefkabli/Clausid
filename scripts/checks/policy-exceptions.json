@@ -1,0 +1,16 @@
+[
+  {
+    "rule": "type-assertion",
+    "file": "apps/worker/src/records.ts",
+    "symbol": "storedRecord",
+    "reason": "The runtime schema and recursive equality check validate the original private record without normalizing any known value; returning the original preserves unknown nested stored extensions.",
+    "test": "tests/records.test.ts"
+  },
+  {
+    "rule": "type-assertion",
+    "file": "apps/web/src/defined-props.ts",
+    "symbol": "definedProps",
+    "reason": "This checked React/platform adapter removes only undefined own enumerable values, preserves required/literal types and references, and evaluates accessors once without changing the prototype.",
+    "test": "tests/defined-props.test.ts"
+  }
+]

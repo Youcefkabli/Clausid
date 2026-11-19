@@ -8,7 +8,9 @@ GlobalWorkerOptions.workerSrc = workerUrl
 export async function prepareWorkspaceDocument(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const attachment = workspaceDocument.safeParse({ name: file.name, data: toBase64(bytes) })
-  if (!attachment.success) throw new Error('Choose a PDF file up to 1 MB.')
+  if (!attachment.success) {
+    throw new Error('Choose a PDF file up to 1 MB.')
+  }
 
   const task = getDocument({ data: bytes, useWasm: false, isOffscreenCanvasSupported: false })
   try {
@@ -16,7 +18,9 @@ export async function prepareWorkspaceDocument(file: File) {
     for (let number = 1; number <= pdf.numPages; number++) {
       const page = await pdf.getPage(number)
       const content = await page.getTextContent()
-      if (content.items.some(item => 'str' in item && item.str.trim())) return attachment.data
+      if (content.items.some((item) => 'str' in item && item.str.trim())) {
+        return attachment.data
+      }
     }
   } catch {
     throw new Error('Choose a readable, unencrypted PDF.')

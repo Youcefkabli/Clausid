@@ -1,7 +1,8 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { makeInMemoryAdapter } from '@livestore/adapter-web'
 import { createStorePromise, Events, makeSchema, queryDb, Schema, State } from '@livestore/livestore'
-import type { ContractView, Summary } from '@clausid/contracts'
+import type { ContractView, Summary, ResponseSchema } from '@clausid/contracts'
+import { parseProjection } from './projection.ts'
 import type { Store } from '@livestore/livestore'
 
 const projections = State.SQLite.table({
@@ -29,14 +30,19 @@ export function project(store: AppStore, id: string, value: Summary[] | Contract
     store.commit(events.received({ id, value: encoded }))
   }
 }
-export function clearProjection(store: AppStore, id: string) { store.commit(events.removed({ id })) }
+export function clearProjection(store: AppStore, id: string) {
+  store.commit(events.removed({ id }))
+}
 
-export function useProjection(store: AppStore, id: string) {
+export function useProjection<T>(store: AppStore, id: string, schema: ResponseSchema<T>) {
   const query = useMemo(() => projection(id), [id])
-  const source = useMemo(() => ({
-    subscribe: (notify: () => void) => store.subscribe(query, notify),
-    snapshot: () => store.query(query)?.value,
-  }), [store, query])
+  const source = useMemo(
+    () => ({
+      subscribe: (notify: () => void) => store.subscribe(query, notify),
+      snapshot: () => store.query(query)?.value,
+    }),
+    [store, query],
+  )
   const value = useSyncExternalStore(source.subscribe, source.snapshot)
-  return value === undefined ? undefined : { value }
+  return useMemo(() => parseProjection(value, schema), [value, schema])
 }

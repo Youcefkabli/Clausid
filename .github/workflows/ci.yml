@@ -10,25 +10,15 @@ jobs:
           node-version-file: .node-version
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
-      - run: pnpm test
       - name: Install PDF engine build tools
         run: |
-          rustup toolchain install 1.93.1 --profile minimal --target wasm32-unknown-unknown
+          rustup toolchain install 1.93.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
           cargo +1.93.1 install wasm-bindgen-cli --version 0.2.130 --locked
-      - run: pnpm build
-      - name: Check Cloudflare bundle and auth schema
-        run: |
-          pnpm run deploy --dry-run
-          (cd apps/auth && node src/schema.ts) | diff - deploy/d1/0001_auth.sql
       - run: pnpm exec playwright install --with-deps chromium
       - run: docker compose --profile dev up -d mailpit
-      - run: pnpm test:e2e
+      - run: pnpm verify
   pdf-processor:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/pdf-engine
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,32 +26,19 @@ jobs:
           node-version-file: .node-version
       - run: |
           rustup toolchain install 1.93.1 --profile minimal --component rustfmt,clippy --target wasm32-unknown-unknown
-          cargo install wasm-bindgen-cli --version 0.2.130 --locked
-      - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: sh build.sh
+          cargo +1.93.1 install wasm-bindgen-cli --version 0.2.130 --locked
       - run: corepack enable && pnpm install --frozen-lockfile
-        working-directory: .
-      - run: |
-          apps/worker/node_modules/workerd/bin/workerd serve deploy/pdf-workerd.capnp &
-          processor_pid=$!
-          trap 'kill "$processor_pid" 2>/dev/null || true' EXIT
-          curl -fsS --retry 15 --retry-connrefused --retry-delay 1 http://127.0.0.1:8789/healthz
-          node packages/pdf-engine/worker/smoke.mjs
-        working-directory: .
+      - run: pnpm verify:pdf
   operations:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/ops
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
       - run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt,clippy
-      - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: cargo build --locked --release
+      - run: corepack enable
+      - run: pnpm verify:ops
       - uses: actions/upload-artifact@v4
         with:
           name: clausid-ops-linux

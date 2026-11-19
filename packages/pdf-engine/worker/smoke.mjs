@@ -23,8 +23,13 @@ for (const [index, object] of objects.entries()) {
   size += chunk.length
   buffers.push(chunk)
 }
-buffers.push(Buffer.from(`xref\n0 8\n0000000000 65535 f \n${offsets.map(offset =>
-  `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Root 1 0 R /Size 8 >>\nstartxref\n${size}\n%%EOF\n`))
+buffers.push(
+  Buffer.from(
+    `xref\n0 8\n0000000000 65535 f \n${offsets
+      .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+      .join('')}trailer\n<< /Root 1 0 R /Size 8 >>\nstartxref\n${size}\n%%EOF\n`,
+  ),
+)
 const source = Buffer.concat(buffers)
 
 async function post(path, body, status = 200) {
@@ -43,7 +48,10 @@ function frame(metadata, pdf = source) {
 const inspected = await (await post('inspect', source)).json()
 const sourceDigest = createHash('sha256').update(source).digest('hex')
 assert.equal(inspected.sourceDigest, sourceDigest)
-assert.deepEqual(inspected.blocks.map(block => block.text), ['Pay in 15 days', 'Pay in 15 days'])
+assert.deepEqual(
+  inspected.blocks.map((block) => block.text),
+  ['Pay in 15 days', 'Pay in 15 days'],
+)
 assert.deepEqual(inspected.blocks[1].baseline, [72, 600])
 const edit = { id: 'approved-revision', page: 0, block: 1, offset: 7, expected: '15', replacement: '30' }
 assert.deepEqual(await (await post('plan', frame({ sourceDigest, edit }))).json(), { fits: true })
@@ -56,7 +64,10 @@ const pdf = rewritten.subarray(4 + metadataLength)
 assert.deepEqual(metadata.applied, ['approved-revision'])
 assert.equal(metadata.digest, createHash('sha256').update(pdf).digest('hex'))
 const output = await (await post('inspect', pdf)).json()
-assert.deepEqual(output.blocks.map(block => block.text), ['Pay in 15 days', 'Pay in 30 days'])
+assert.deepEqual(
+  output.blocks.map((block) => block.text),
+  ['Pay in 15 days', 'Pay in 30 days'],
+)
 if (process.argv[3]) {
   const { writeFile } = await import('node:fs/promises')
   await writeFile(process.argv[3], pdf, { flag: 'wx' })

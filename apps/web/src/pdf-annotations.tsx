@@ -1,3 +1,4 @@
+import { pdfTextBlocksSchema } from '@clausid/contracts'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
@@ -12,7 +13,15 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { api, errorMessage } from './api.ts'
 import type { ContractView, PdfAnnotationChange, PdfLocation, PdfTextBlock } from '@clausid/contracts'
 
-export function PdfAnnotations({ contract, selection, propose, save, busy, error, visit }: {
+export function PdfAnnotations({
+  contract,
+  selection,
+  propose,
+  save,
+  busy,
+  error,
+  visit,
+}: {
   contract: ContractView
   selection?: PdfSelection
   visit: (page: number, quote?: string, location?: PdfLocation) => void
@@ -22,7 +31,7 @@ export function PdfAnnotations({ contract, selection, propose, save, busy, error
   error: string
 }) {
   const [page, setPage] = useState(String(selection?.page ?? 1))
-  const retry = useRef({body: '', id: ''})
+  const retry = useRef({ body: '', id: '' })
   const [manualDigest, setManualDigest] = useState<string>()
   const [manual, setManual] = useState(false)
   const [text, setText] = useState('')
@@ -37,11 +46,21 @@ export function PdfAnnotations({ contract, selection, propose, save, busy, error
   const validPage = Number.isInteger(Number(page)) && Number(page) >= 1 && Number(page) <= pages
 
   useEffect(() => {
-    if (!writable || !propose || !validPage) return
+    if (!writable || !propose || !validPage) {
+      return
+    }
     const abort = new AbortController()
-    void api<PdfTextBlock[]>('/' + contract.id + '/text-blocks?page=' + Number(page), undefined, abort.signal)
-      .then(blocks => { if (!abort.signal.aborted) setSourceLines({ page, blocks }) })
-      .catch(reason => { if (!abort.signal.aborted) setSourceLines({ page, blocks: [], error: errorMessage(reason) }) })
+    void api(pdfTextBlocksSchema, '/' + contract.id + '/text-blocks?page=' + Number(page), undefined, abort.signal)
+      .then((blocks) => {
+        if (!abort.signal.aborted) {
+          setSourceLines({ page, blocks })
+        }
+      })
+      .catch((reason) => {
+        if (!abort.signal.aborted) {
+          setSourceLines({ page, blocks: [], error: errorMessage(reason) })
+        }
+      })
     return () => abort.abort()
   }, [contract.id, page, propose, validPage, writable])
 
@@ -53,20 +72,25 @@ export function PdfAnnotations({ contract, selection, propose, save, busy, error
   const stale = displayed !== digest
   const mappedBlock = automatic ? unique && String(unique.block) : block
   const phrase = automatic ? selection.quote : expected
-  const selected = lines?.blocks.find(line => String(line.block) === mappedBlock)
-  const canAdd = !busy && !stale && validPage && (propose
-    ? Boolean(selected && phrase && selected.text.includes(phrase) && phrase !== replacement)
-    : Boolean(text.trim()))
+  const selected = lines?.blocks.find((line) => String(line.block) === mappedBlock)
+  const canAdd =
+    !busy && !stale && validPage && (propose ? Boolean(selected && phrase && selected.text.includes(phrase) && phrase !== replacement) : Boolean(text.trim()))
 
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!canAdd) return
+    if (!canAdd) {
+      return
+    }
     const edit = propose && selected ? { block: selected.block, expected: phrase, replacement } : undefined
-    const location = selection?.singleLine && selection.run && selection.offset !== undefined && !manual
-      ? {x: selection.run.x, y: selection.run.y, offset: selection.offset} : undefined
+    const location =
+      selection?.singleLine && selection.run && selection.offset !== undefined && !manual
+        ? { x: selection.run.x, y: selection.run.y, offset: selection.offset }
+        : undefined
     const change = { location, action: 'add' as const, page: Number(page), text, replacement: edit, displayedDigest: displayed, quote: selection?.quote }
     const body = JSON.stringify(change)
-    if (retry.current.body !== body) retry.current = {body, id: crypto.randomUUID()}
+    if (retry.current.body !== body) {
+      retry.current = { body, id: crypto.randomUUID() }
+    }
     if (await save({ ...change, requestId: retry.current.id })) {
       retry.current.body = ''
       setText('')
@@ -79,7 +103,9 @@ export function PdfAnnotations({ contract, selection, propose, save, busy, error
 
   async function sendReply(event: FormEvent<HTMLFormElement>, id: string) {
     event.preventDefault()
-    if (!reply.trim() || busy) return
+    if (!reply.trim() || busy) {
+      return
+    }
     if (await save({ action: 'reply', id, text: reply })) {
       setReply('')
       setReplyTo(undefined)
@@ -89,77 +115,170 @@ export function PdfAnnotations({ contract, selection, propose, save, busy, error
   return (
     <VStack gap={3}>
       {error && <Banner status="error" role="alert" title={error} />}
-      {writable && <form onSubmit={add}>
-        <VStack gap={2}>
-          <TextInput label={`Page (1–${pages})`} value={page} isReadOnly={!!selection} onChange={value => {
-            setPage(value); setBlock(''); setExpected(''); setReplacement('')
-          }} />
-          {selection && <Text>Selected passage: {selection.quote}</Text>}
-          {stale && <Banner status="warning" title="The PDF changed. Select the passage again." />}
-          {automatic && propose && lines && !unique && <Text>{selection.singleLine ? 'This wording cannot be uniquely matched to an original source line.' : 'Select wording from one source line for a replacement.'} You can comment on this passage.</Text>}
-          {propose && validPage && <>
-            {lines?.error && <Banner status="error" role="alert" title={lines.error} />}
-            {!lines?.error && <Selector label="Source line" value={mappedBlock ?? ''} placeholder="Choose a line"
-              isLoading={!lines} isDisabled={!lines?.blocks.length}
-              options={lines?.blocks.map(line => ({
-                value: String(line.block), label: (line.block + 1) + '. ' + line.text.slice(0, 100),
-              })) ?? []}
-              onChange={value => {
-                setManualDigest(digest)
-                setManual(true)
-                const line = lines?.blocks.find(item => String(item.block) === value)
-                setBlock(value); setExpected(line && line.text.length <= 800 ? line.text : ''); setReplacement('')
-              }} />}
-            {selected && <>
-              <TextArea label="Text to replace" value={phrase} onChange={value => { setManual(true); setBlock(mappedBlock ?? ''); setExpected(value) }} maxLength={800} rows={2}
-                description="Enter an exact phrase that occurs once in this source line." />
-              <TextArea label="Replacement text" value={replacement} onChange={setReplacement} maxLength={800} rows={2}
-                description="Use text that fits within the original space. An empty replacement removes the selected phrase." />
-            </>}
-          </>}
-          <TextArea label="Annotation" value={text} onChange={setText} maxLength={800} rows={3} />
-          <HStack><Button label={propose ? 'Submit suggestion' : 'Add annotation'} type="submit" variant="primary" isDisabled={!canAdd} /></HStack>
-        </VStack>
-      </form>}
+      {writable && (
+        <form onSubmit={add}>
+          <VStack gap={2}>
+            <TextInput
+              label={`Page (1–${pages})`}
+              value={page}
+              isReadOnly={!!selection}
+              onChange={(value) => {
+                setPage(value)
+                setBlock('')
+                setExpected('')
+                setReplacement('')
+              }}
+            />
+            {selection && <Text>Selected passage: {selection.quote}</Text>}
+            {stale && <Banner status="warning" title="The PDF changed. Select the passage again." />}
+            {automatic && propose && lines && !unique && (
+              <Text>
+                {selection.singleLine
+                  ? 'This wording cannot be uniquely matched to an original source line.'
+                  : 'Select wording from one source line for a replacement.'}{' '}
+                You can comment on this passage.
+              </Text>
+            )}
+            {propose && validPage && (
+              <>
+                {lines?.error && <Banner status="error" role="alert" title={lines.error} />}
+                {!lines?.error && (
+                  <Selector
+                    label="Source line"
+                    value={mappedBlock ?? ''}
+                    placeholder="Choose a line"
+                    isLoading={!lines}
+                    isDisabled={!lines?.blocks.length}
+                    options={
+                      lines?.blocks.map((line) => ({
+                        value: String(line.block),
+                        label: line.block + 1 + '. ' + line.text.slice(0, 100),
+                      })) ?? []
+                    }
+                    onChange={(value) => {
+                      setManualDigest(digest)
+                      setManual(true)
+                      const line = lines?.blocks.find((item) => String(item.block) === value)
+                      setBlock(value)
+                      setExpected(line && line.text.length <= 800 ? line.text : '')
+                      setReplacement('')
+                    }}
+                  />
+                )}
+                {selected && (
+                  <>
+                    <TextArea
+                      label="Text to replace"
+                      value={phrase}
+                      onChange={(value) => {
+                        setManual(true)
+                        setBlock(mappedBlock ?? '')
+                        setExpected(value)
+                      }}
+                      maxLength={800}
+                      rows={2}
+                      description="Enter an exact phrase that occurs once in this source line."
+                    />
+                    <TextArea
+                      label="Replacement text"
+                      value={replacement}
+                      onChange={setReplacement}
+                      maxLength={800}
+                      rows={2}
+                      description="Use text that fits within the original space. An empty replacement removes the selected phrase."
+                    />
+                  </>
+                )}
+              </>
+            )}
+            <TextArea label="Annotation" value={text} onChange={setText} maxLength={800} rows={3} />
+            <HStack>
+              <Button label={propose ? 'Submit suggestion' : 'Add annotation'} type="submit" variant="primary" isDisabled={!canAdd} />
+            </HStack>
+          </VStack>
+        </form>
+      )}
       <Heading level={3}>Negotiation history</Heading>
-      {!contract.annotations?.filter(item => !item.withdrawn && !!item.edit === propose).length && <Text color="secondary">No annotations yet.</Text>}
-      {contract.annotations?.filter(item => !item.withdrawn && !!item.edit === propose).map(annotation => <VStack key={annotation.id} gap={2}>
-        <Divider />
-        <HStack gap={2} wrap="wrap" vAlign="center">
-          <Button label={`View page ${annotation.page}`} size="sm" variant="ghost" onClick={() => visit(annotation.page, annotation.edit?.replacement && annotation.decision?.status === 'Approved' ? annotation.edit.replacement : annotation.quote ?? annotation.edit?.expected, annotation.location)} />
-          <Text type="supporting">{annotation.decision?.status ?? 'Open'}</Text>
-        </HStack>
-        <Text type="supporting" color="secondary">{annotation.author} · {new Date(annotation.createdAt).toLocaleString()}</Text>
-        {annotation.edit && <VStack gap={0.5}>
-          <Text>Original: {annotation.edit.expected}</Text>
-          <Text>Replacement: {annotation.edit.replacement || '(remove text)'}</Text>
-        </VStack>}
-        {annotation.markup && <Text>{annotation.markup.tool} annotation</Text>}
-        {annotation.quote && !annotation.edit && <Text>{annotation.quote}</Text>}
-        {annotation.text && <Text>{annotation.text}</Text>}
-        {annotation.replies.map(item => <VStack key={item.id} gap={0.5} paddingInline={2}>
-          <Text type="supporting" color="secondary">{item.author} · {new Date(item.createdAt).toLocaleString()}</Text>
-          <Text>{item.text}</Text>
-        </VStack>)}
-        {annotation.decision && <Text type="supporting" color="secondary">
-          {annotation.decision.status} by {annotation.decision.author} · {new Date(annotation.decision.at).toLocaleString()}
-        </Text>}
-        {writable && !annotation.decision && <>
-          <HStack gap={2} wrap="wrap">
-            <Button label="Reply" onClick={() => { setReplyTo(annotation.id); setReply('') }} isDisabled={busy} />
-            {contract.role === 'owner' && <>
-              <Button label="Approve" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Approved' })} isDisabled={busy} />
-              <Button label="Reject" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Rejected' })} isDisabled={busy} />
-            </>}
-          </HStack>
-          {replyTo === annotation.id && <form onSubmit={event => void sendReply(event, annotation.id)}>
-            <VStack gap={2}>
-              <TextArea label="Reply to annotation" value={reply} onChange={setReply} maxLength={800} rows={2} />
-              <HStack><Button label="Post reply" type="submit" variant="primary" isDisabled={busy || !reply.trim()} /></HStack>
-            </VStack>
-          </form>}
-        </>}
-      </VStack>)}
+      {!contract.annotations?.filter((item) => !item.withdrawn && !!item.edit === propose).length && <Text color="secondary">No annotations yet.</Text>}
+      {contract.annotations
+        ?.filter((item) => !item.withdrawn && !!item.edit === propose)
+        .map((annotation) => (
+          <VStack key={annotation.id} gap={2}>
+            <Divider />
+            <HStack gap={2} wrap="wrap" vAlign="center">
+              <Button
+                label={`View page ${annotation.page}`}
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  visit(
+                    annotation.page,
+                    annotation.edit?.replacement && annotation.decision?.status === 'Approved'
+                      ? annotation.edit.replacement
+                      : (annotation.quote ?? annotation.edit?.expected),
+                    annotation.location,
+                  )
+                }
+              />
+              <Text type="supporting">{annotation.decision?.status ?? 'Open'}</Text>
+            </HStack>
+            <Text type="supporting" color="secondary">
+              {annotation.author} · {new Date(annotation.createdAt).toLocaleString()}
+            </Text>
+            {annotation.edit && (
+              <VStack gap={0.5}>
+                <Text>Original: {annotation.edit.expected}</Text>
+                <Text>Replacement: {annotation.edit.replacement || '(remove text)'}</Text>
+              </VStack>
+            )}
+            {annotation.markup && <Text>{annotation.markup.tool} annotation</Text>}
+            {annotation.quote && !annotation.edit && <Text>{annotation.quote}</Text>}
+            {annotation.text && <Text>{annotation.text}</Text>}
+            {annotation.replies.map((item) => (
+              <VStack key={item.id} gap={0.5} paddingInline={2}>
+                <Text type="supporting" color="secondary">
+                  {item.author} · {new Date(item.createdAt).toLocaleString()}
+                </Text>
+                <Text>{item.text}</Text>
+              </VStack>
+            ))}
+            {annotation.decision && (
+              <Text type="supporting" color="secondary">
+                {annotation.decision.status} by {annotation.decision.author} · {new Date(annotation.decision.at).toLocaleString()}
+              </Text>
+            )}
+            {writable && !annotation.decision && (
+              <>
+                <HStack gap={2} wrap="wrap">
+                  <Button
+                    label="Reply"
+                    onClick={() => {
+                      setReplyTo(annotation.id)
+                      setReply('')
+                    }}
+                    isDisabled={busy}
+                  />
+                  {contract.role === 'owner' && (
+                    <>
+                      <Button label="Approve" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Approved' })} isDisabled={busy} />
+                      <Button label="Reject" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Rejected' })} isDisabled={busy} />
+                    </>
+                  )}
+                </HStack>
+                {replyTo === annotation.id && (
+                  <form onSubmit={(event) => void sendReply(event, annotation.id)}>
+                    <VStack gap={2}>
+                      <TextArea label="Reply to annotation" value={reply} onChange={setReply} maxLength={800} rows={2} />
+                      <HStack>
+                        <Button label="Post reply" type="submit" variant="primary" isDisabled={busy || !reply.trim()} />
+                      </HStack>
+                    </VStack>
+                  </form>
+                )}
+              </>
+            )}
+          </VStack>
+        ))}
     </VStack>
   )
 }

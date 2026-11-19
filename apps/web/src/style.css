@@ -9,7 +9,8 @@
   margin-inline: auto;
 }
 
-.flow, form {
+.flow,
+form {
   display: grid;
   gap: 16px;
   min-width: 0;
@@ -19,7 +20,8 @@ form {
   justify-items: start;
 }
 
-.actions, .contract-top {
+.actions,
+.contract-top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -134,4 +136,7 @@ iframe {
   font-size: calc(var(--text-scale-factor) * var(--font-height));
   transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1)) scale(calc(1 / var(--min-font-size)));
 }
-.pdf-text-layer ::selection { background: Highlight; color: HighlightText; }
+.pdf-text-layer ::selection {
+  background: Highlight;
+  color: HighlightText;
+}

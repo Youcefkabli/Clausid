@@ -1,3 +1,4 @@
+// Exercise real verified-account registration, session logout and password recovery against Better Auth/Mailpit.
 import { setTimeout as delay } from 'node:timers/promises'
 import { expect, test, type Page } from '@playwright/test'
 import { linkFor } from './mailpit.ts'
@@ -9,10 +10,7 @@ async function signIn(page: Page, email: string, value: string) {
   await page.getByLabel(/^Email\b/).fill(email)
   await page.getByLabel(/^Password\b/).fill(value)
   const login = page.getByRole('button', { name: 'Login', exact: true })
-  const [response] = await Promise.all([
-    page.waitForResponse(result => result.url().endsWith('/api/auth/sign-in/email')),
-    login.click(),
-  ])
+  const [response] = await Promise.all([page.waitForResponse((result) => result.url().endsWith('/api/auth/sign-in/email')), login.click()])
   if (response.status() === 429) {
     const retryAfter = Number(response.headers()['x-retry-after'] ?? '10')
     await delay((retryAfter + 1) * 1000)

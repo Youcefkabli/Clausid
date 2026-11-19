@@ -1,7 +1,7 @@
 {
+  "name": "@clausid/web",
   "private": true,
   "type": "module",
-  "name": "@clausid/web",
   "scripts": {
     "dev": "vp dev --host 127.0.0.1",
     "build": "vp build && node ../../scripts/web-assets.mjs"

@@ -25,6 +25,11 @@ body:
       label: Scope and dependencies
       description: Name the affected area, constraints, and any blocking issues.
   - type: textarea
+    id: specification
+    attributes:
+      label: Specification and contracts
+      description: For substantial work, link the named workstream plan/tracker, prompt, requirement IDs and relevant feature/contract references. Small fixes can describe these here.
+  - type: textarea
     id: acceptance
     attributes:
       label: Acceptance and verification

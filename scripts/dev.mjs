@@ -4,7 +4,9 @@ import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
 import { loadEnvFile } from 'node:process'
 
-if (existsSync('.env')) loadEnvFile('.env')
+if (existsSync('.env')) {
+  loadEnvFile('.env')
+}
 const storage = resolve(process.env.CLAUSID_DATA_DIR ?? '.data')
 const vitePort = process.env.CLAUSID_VITE_PORT ?? '5173'
 const workerPort = process.env.CLAUSID_HTTP_PORT ?? '8787'
@@ -18,30 +20,53 @@ const env = {
 }
 mkdirSync(resolve(storage, 'contracts'), { recursive: true, mode: 0o700 })
 
-for (const args of [['--filter', '@clausid/worker', 'build'], ['--filter', '@clausid/auth', 'migrate']]) {
+for (const args of [['check:local'], ['--filter', '@clausid/worker', 'build'], ['--filter', '@clausid/auth', 'migrate']]) {
   const result = spawnSync('pnpm', args, { env, stdio: 'inherit' })
-  if (result.status !== 0) process.exit(result.status ?? 1)
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1)
+  }
 }
 const children = []
 let closing = false
 function stop(code) {
-  if (closing) return
+  if (closing) {
+    return
+  }
   closing = true
   process.exitCode = code
   for (const child of children) {
-    try { process.kill(-child.pid, 'SIGTERM') } catch { /* Process already exited. */ }
+    try {
+      process.kill(-child.pid, 'SIGTERM')
+    } catch {
+      /* Process already exited. */
+    }
   }
 }
 function start(command, args, options = {}) {
   const child = spawn(command, args, { env, stdio: 'inherit', detached: true, ...options })
   children.push(child)
-  child.on('exit', (code) => { if (!closing) stop(code ?? 1) })
-  child.on('error', (error) => { console.error(error.message); stop(1) })
+  child.on('exit', (code) => {
+    if (!closing) {
+      stop(code ?? 1)
+    }
+  })
+  child.on('error', (error) => {
+    console.error(error.message)
+    stop(1)
+  })
 }
 process.on('SIGINT', () => stop(0))
 process.on('SIGTERM', () => stop(0))
 
 start(process.execPath, ['src/server.ts'], { cwd: 'apps/auth' })
-start('apps/worker/node_modules/workerd/bin/workerd', ['serve', 'deploy/workerd.capnp', '--socket-addr', `http=127.0.0.1:${workerPort}`, '--external-addr',
-  `auth=127.0.0.1:${env.AUTH_PORT ?? 8788}`, '--directory-path', 'contractDisk=' + resolve(storage, 'contracts')])
+start('apps/worker/node_modules/workerd/bin/workerd', [
+  'serve',
+  'deploy/workerd.capnp',
+  '--socket-addr',
+  `http=127.0.0.1:${workerPort}`,
+  '--external-addr',
+  `auth=127.0.0.1:${env.AUTH_PORT ?? 8788}`,
+  '--directory-path',
+  'contractDisk=' + resolve(storage, 'contracts'),
+])
 start('pnpm', ['--filter', '@clausid/web', 'dev'])

@@ -28,8 +28,11 @@ function withAuth(env: CloudflareEnv): Env {
             return new Response(null, { status: 204 })
           }
           const auth = createAuth({
-            database: env.AUTH_DB, origin: env.PUBLIC_ORIGIN, secret: env.BETTER_AUTH_SECRET,
-            clientIpHeader: 'cf-connecting-ip', sendMail,
+            database: env.AUTH_DB,
+            origin: env.PUBLIC_ORIGIN,
+            secret: env.BETTER_AUTH_SECRET,
+            clientIpHeader: 'cf-connecting-ip',
+            sendMail,
           })
           if (pathname === '/internal/session' && request.method === 'GET') {
             return await sessionResponse(auth, request.headers)
@@ -61,7 +64,9 @@ export class Directory extends DirectoryObject {
 
 export default {
   fetch(request, env) {
-    if (env.OPS_KEY) return maintenanceRequest(request, withAuth(env))
+    if (env.OPS_KEY) {
+      return maintenanceRequest(request, withAuth(env))
+    }
     if (!env.PUBLIC_ORIGIN || !env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32 || !env.MAIL_FROM) {
       return new Response('Clausid deployment requires configuration.', { status: 503 })
     }

@@ -1,6 +1,9 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
-'use client';
+'use client'
+import { definedProps } from '../../defined-props.ts'
+
+import { requiredValue } from '../../../../../packages/contracts/src/invariant.ts'
 
 /**
  * A settings dialog for a product with enough preferences to need navigation,
@@ -60,35 +63,32 @@
  * is too large to expand in place, it belongs on a page.
  */
 
-import {Button} from '@astryxdesign/core/Button';
-import {AspectRatio} from '@astryxdesign/core/AspectRatio';
-import {Card} from '@astryxdesign/core/Card';
-import {Dialog} from '@astryxdesign/core/Dialog';
-import {Divider} from '@astryxdesign/core/Divider';
-import {Grid} from '@astryxdesign/core/Grid';
-import {HStack} from '@astryxdesign/core/HStack';
-import {useMediaQuery} from '@astryxdesign/core/hooks';
-import {Icon} from '@astryxdesign/core/Icon';
-import {IconButton} from '@astryxdesign/core/IconButton';
-import {Kbd} from '@astryxdesign/core/Kbd';
-import {Layout, LayoutContent} from '@astryxdesign/core/Layout';
-import {ListItem} from '@astryxdesign/core/List';
-import {
-  SegmentedControl,
-  SegmentedControlItem,
-} from '@astryxdesign/core/SegmentedControl';
-import {SelectableCard} from '@astryxdesign/core/SelectableCard';
-import {Selector} from '@astryxdesign/core/Selector';
-import {SideNav, SideNavItem, SideNavSection} from '@astryxdesign/core/SideNav';
-import {Stack, StackItem} from '@astryxdesign/core/Stack';
-import {Switch} from '@astryxdesign/core/Switch';
-import {Heading, Text} from '@astryxdesign/core/Text';
-import {TextInput} from '@astryxdesign/core/TextInput';
-import {Theme} from '@astryxdesign/core/theme';
-import {neutralTheme} from '@astryxdesign/theme-neutral/built';
-import {Token} from '@astryxdesign/core/Token';
-import {Tooltip} from '@astryxdesign/core/Tooltip';
-import {VStack} from '@astryxdesign/core/VStack';
+import { Button } from '@astryxdesign/core/Button'
+import { AspectRatio } from '@astryxdesign/core/AspectRatio'
+import { Card } from '@astryxdesign/core/Card'
+import { Dialog } from '@astryxdesign/core/Dialog'
+import { Divider } from '@astryxdesign/core/Divider'
+import { Grid } from '@astryxdesign/core/Grid'
+import { HStack } from '@astryxdesign/core/HStack'
+import { useMediaQuery } from '@astryxdesign/core/hooks'
+import { Icon } from '@astryxdesign/core/Icon'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { Kbd } from '@astryxdesign/core/Kbd'
+import { Layout, LayoutContent } from '@astryxdesign/core/Layout'
+import { ListItem } from '@astryxdesign/core/List'
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
+import { SelectableCard } from '@astryxdesign/core/SelectableCard'
+import { Selector } from '@astryxdesign/core/Selector'
+import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
+import { Stack, StackItem } from '@astryxdesign/core/Stack'
+import { Switch } from '@astryxdesign/core/Switch'
+import { Heading, Text } from '@astryxdesign/core/Text'
+import { TextInput } from '@astryxdesign/core/TextInput'
+import { Theme } from '@astryxdesign/core/theme'
+import { neutralTheme } from '@astryxdesign/theme-neutral/built'
+import { Token } from '@astryxdesign/core/Token'
+import { Tooltip } from '@astryxdesign/core/Tooltip'
+import { VStack } from '@astryxdesign/core/VStack'
 import {
   ArrowDownOnSquareIcon,
   ArrowDownTrayIcon,
@@ -141,8 +141,8 @@ import {
   UserCircleIcon,
   UserIcon,
   UsersIcon,
-} from '@heroicons/react/24/outline';
-import * as stylex from '@stylexjs/stylex';
+} from '@heroicons/react/24/outline'
+import * as stylex from '@stylexjs/stylex'
 import {
   Children,
   createContext,
@@ -157,8 +157,8 @@ import {
   type ComponentProps,
   type ReactNode,
   type SVGProps,
-} from 'react';
-import {authClient, errorMessage} from '../../api.ts';
+} from 'react'
+import { authClient, errorMessage } from '../../api.ts'
 
 /**
  * Where the hub swaps its two-column shell for the one-column phone layout.
@@ -170,10 +170,10 @@ import {authClient, errorMessage} from '../../api.ts';
  * at 420px. Keyed to the viewport, rows would stack hardest exactly where they
  * had just been handed the most room.
  */
-const NARROW_VIEWPORT = '(max-width: 640px)';
+const NARROW_VIEWPORT = '(max-width: 640px)'
 
 /** The panel column rows measure themselves against. */
-const PANEL_CONTAINER = 'settings-panel';
+const PANEL_CONTAINER = 'settings-panel'
 
 /**
  * The ONE width at which every row on a panel goes from two columns to one.
@@ -189,17 +189,17 @@ const PANEL_CONTAINER = 'settings-panel';
  * gutter, and the widest control on the surface. Rows with smaller controls
  * have room to spare at that width and stack anyway, which is the point.
  */
-const ROW_STACK = `@container ${PANEL_CONTAINER} (max-width: 480px)`;
+const ROW_STACK = `@container ${PANEL_CONTAINER} (max-width: 480px)`
 
 /** The one inset for this surface: spacing step 4 === 16px. */
-const ROW_PADDING = 4;
+const ROW_PADDING = 4
 
 /**
  * The one width every selector and text input in a row takes, so a single
  * control column runs down the panel instead of each control sizing to its own
  * longest label — which is what makes the column scannable rather than ragged.
  */
-const CONTROL_WIDTH = 192;
+const CONTROL_WIDTH = 192
 
 const styles = stylex.create({
   // `SideNav`'s root sets a starting width but no `flex-shrink`, so as a flex
@@ -248,7 +248,7 @@ const styles = stylex.create({
   shell: {
     height: 'min(800px, calc(100dvh - 2rem))',
   },
-});
+})
 
 /** The panel column, and the settings row that measures itself against it. */
 const row = stylex.create({
@@ -261,11 +261,11 @@ const row = stylex.create({
   },
   line: {
     display: 'flex',
-    flexDirection: {default: 'row', [ROW_STACK]: 'column'},
+    flexDirection: { default: 'row', [ROW_STACK]: 'column' },
     // The one alignment that moves: centred against the control beside it,
     // stretched to the full row above it — which is what puts a stacked control
     // on the row's own inset, the edge the icon starts at.
-    alignItems: {default: 'center', [ROW_STACK]: 'stretch'},
+    alignItems: { default: 'center', [ROW_STACK]: 'stretch' },
     // Stacked, the control drops into the same column as `detail`, which the
     // row already spaces at 8px — so 8px here too, and a stacked row reads as
     // one rhythm rather than a 12px step to the control and an 8px step to its
@@ -278,12 +278,12 @@ const row = stylex.create({
   textColumn: {
     // Lifted once stacked: holding 420px inside a ~400px column would just be a
     // narrower column for no reason.
-    maxWidth: {default: 420, [ROW_STACK]: 'none'},
+    maxWidth: { default: 420, [ROW_STACK]: 'none' },
   },
   control: {
     flexShrink: 0,
   },
-});
+})
 
 /** The miniature drawn inside each theme card. */
 const preview = stylex.create({
@@ -313,7 +313,7 @@ const preview = stylex.create({
   inert: {
     pointerEvents: 'none',
   },
-});
+})
 
 /**
  * The chosen face, as a TOKEN override rather than a `font-family` on the
@@ -325,21 +325,11 @@ const preview = stylex.create({
  * CSS properties, and a custom property is not one.
  */
 function faceStyle(stack: string): CSSProperties {
-  const style: Record<string, string> = {'--font-family-body': stack};
-  return style;
+  const style: Record<string, string> = { '--font-family-body': stack }
+  return style
 }
 
-type PanelId =
-  | 'profile'
-  | 'security'
-  | 'billing'
-  | 'appearance'
-  | 'notifications'
-  | 'shortcuts'
-  | 'language'
-  | 'privacy'
-  | 'integrations'
-  | 'developer';
+type PanelId = 'profile' | 'security' | 'billing' | 'appearance' | 'notifications' | 'shortcuts' | 'language' | 'privacy' | 'integrations' | 'developer'
 
 /**
  * Icons are heroicons outline, and only heroicons outline.
@@ -350,13 +340,13 @@ type PanelId =
  * 2, so a lucide row icon puts two stroke weights in one surface. One set
  * means one weight, one optical size and one visual language down the column.
  */
-type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
+type IconComponent = ComponentType<SVGProps<SVGSVGElement>>
 
 interface PanelConfig {
-  id: PanelId;
-  label: string;
-  description: string;
-  icon: IconComponent;
+  id: PanelId
+  label: string
+  description: string
+  icon: IconComponent
 }
 
 /**
@@ -364,7 +354,7 @@ interface PanelConfig {
  * tab strip's order, so a panel cannot drift out of one by being added to the
  * other.
  */
-const PANEL_GROUPS: {label: string; panels: PanelConfig[]}[] = [
+const PANEL_GROUPS: { label: string; panels: PanelConfig[] }[] = [
   {
     label: 'Account',
     panels: [
@@ -440,20 +430,20 @@ const PANEL_GROUPS: {label: string; panels: PanelConfig[]}[] = [
       },
     ],
   },
-];
+]
 
-const PANELS: PanelConfig[] = PANEL_GROUPS.flatMap(group => group.panels);
-const DEFAULT_PANEL: PanelId = 'profile';
+const PANELS: PanelConfig[] = PANEL_GROUPS.flatMap((group) => group.panels)
+const DEFAULT_PANEL: PanelId = 'profile'
 
 function panelConfig(id: PanelId): PanelConfig {
-  return PANELS.find(panel => panel.id === id) ?? PANELS[0];
+  return PANELS.find((panel) => panel.id === id) ?? requiredValue(PANELS[0])
 }
 
 interface SearchableSetting {
-  title: string;
-  description: string;
-  panel: PanelId;
-  icon: IconComponent;
+  title: string
+  description: string
+  panel: PanelId
+  icon: IconComponent
 }
 
 /**
@@ -546,17 +536,14 @@ const SEARCHABLE_SETTINGS: SearchableSetting[] = [
     panel: 'developer',
     icon: CodeBracketIcon,
   },
-];
+]
 
-function settingMatchesSearch(
-  setting: SearchableSetting,
-  normalizedQuery: string,
-): boolean {
+function settingMatchesSearch(setting: SearchableSetting, normalizedQuery: string): boolean {
   return (
     setting.title.toLowerCase().includes(normalizedQuery) ||
     setting.description.toLowerCase().includes(normalizedQuery) ||
     panelConfig(setting.panel).label.toLowerCase().includes(normalizedQuery)
-  );
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -579,14 +566,8 @@ function settingMatchesSearch(
  * sentence, put it on the row it qualifies or split the card — a reader should
  * know why these settings belong together from the heading and row names.
  */
-function SettingsCard({
-  title,
-  children,
-}: {
-  title?: string;
-  children: ReactNode;
-}) {
-  const rows = Children.toArray(children);
+function SettingsCard({ title, children }: { title?: string; children: ReactNode }) {
+  const rows = Children.toArray(children)
 
   return (
     <VStack gap={1.5}>
@@ -613,7 +594,7 @@ function SettingsCard({
         </VStack>
       </Card>
     </VStack>
-  );
+  )
 }
 
 /**
@@ -636,15 +617,15 @@ function SettingsRow({
   control,
   detail,
 }: {
-  title: string;
+  title: string
   /**
    * A chip that is part of the setting's NAME rather than a fact about it — a
    * plan tier, a "beta" tag. It sits on the title's own line: the supporting
    * line below is prose the eye reads second, so a chip parked there stops
    * reading as part of the name.
    */
-  titleAccessory?: ReactNode;
-  description?: ReactNode;
+  titleAccessory?: ReactNode
+  description?: ReactNode
   /**
    * REQUIRED, and required on purpose. An icon shifts its row's title 24px
    * right, so a card where only some rows carry one has its titles on two
@@ -653,8 +634,8 @@ function SettingsRow({
    * designed. Optional, it drifts: a row added later quietly leaves its icon
    * out and the column goes ragged with no error. The type is the enforcement.
    */
-  icon: IconComponent;
-  control?: ReactNode;
+  icon: IconComponent
+  control?: ReactNode
   /**
    * Content belonging to this setting that cannot fit beside it — a live
    * preview, a picker of tiles. It rides INSIDE the row's own box rather than
@@ -668,7 +649,7 @@ function SettingsRow({
    * past every title above it, which is the double-padding the layout docs
    * name as an anti-pattern.
    */
-  detail?: ReactNode;
+  detail?: ReactNode
 }) {
   return (
     <VStack padding={ROW_PADDING} gap={2}>
@@ -732,7 +713,7 @@ function SettingsRow({
       </Stack>
       {detail}
     </VStack>
-  );
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -740,37 +721,37 @@ function SettingsRow({
  * ------------------------------------------------------------------ */
 
 interface SettingsState {
-  displayName: string;
-  jobTitle: string;
-  pronouns: string;
-  showLocalTime: boolean;
-  presence: string;
-  twoFactor: boolean;
-  billingEmail: string;
-  emailInvoices: boolean;
-  theme: string;
-  accent: string;
-  font: string;
-  density: string;
-  reduceMotion: boolean;
-  emailMentions: boolean;
-  emailComments: boolean;
-  weeklyDigest: boolean;
-  desktopAlerts: boolean;
-  notificationSounds: boolean;
-  quietHours: string;
-  language: string;
-  region: string;
-  timezone: string;
-  weekStart: string;
-  discoverable: boolean;
-  readReceipts: boolean;
-  activityStatus: boolean;
-  personalization: boolean;
-  apiAccess: boolean;
-  webhookUrl: string;
-  earlyAccess: boolean;
-  verboseLogging: boolean;
+  displayName: string
+  jobTitle: string
+  pronouns: string
+  showLocalTime: boolean
+  presence: string
+  twoFactor: boolean
+  billingEmail: string
+  emailInvoices: boolean
+  theme: string
+  accent: string
+  font: string
+  density: string
+  reduceMotion: boolean
+  emailMentions: boolean
+  emailComments: boolean
+  weeklyDigest: boolean
+  desktopAlerts: boolean
+  notificationSounds: boolean
+  quietHours: string
+  language: string
+  region: string
+  timezone: string
+  weekStart: string
+  discoverable: boolean
+  readReceipts: boolean
+  activityStatus: boolean
+  personalization: boolean
+  apiAccess: boolean
+  webhookUrl: string
+  earlyAccess: boolean
+  verboseLogging: boolean
 }
 
 const INITIAL_SETTINGS: SettingsState = {
@@ -805,85 +786,95 @@ const INITIAL_SETTINGS: SettingsState = {
   webhookUrl: '',
   earlyAccess: false,
   verboseLogging: false,
-};
-
-type UpdateSetting = <K extends keyof SettingsState>(
-  key: K,
-  value: SettingsState[K],
-) => void;
-
-interface PanelProps {
-  settings: SettingsState;
-  update: UpdateSetting;
 }
 
-type Account = {name: string; email: string};
-const AccountContext = createContext<Account | null>(null);
+type UpdateSetting = <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => void
 
-function DisplayNameControl({settings, update}: PanelProps) {
-  const account = useContext(AccountContext)!;
-  const [savedName, setSavedName] = useState(account.name);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+interface PanelProps {
+  settings: SettingsState
+  update: UpdateSetting
+}
+
+type Account = { name: string; email: string }
+const AccountContext = createContext<Account | null>(null)
+
+function DisplayNameControl({ settings, update }: PanelProps) {
+  const account = requiredValue(useContext(AccountContext))
+  const [savedName, setSavedName] = useState(account.name)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
 
   async function save() {
-    const name = settings.displayName.trim();
-    if (isLoading || name === savedName) return;
-    if (!name || name.length > 120) {
-      setError('Enter a display name of 1 to 120 characters.');
-      return;
+    const name = settings.displayName.trim()
+    if (isLoading || name === savedName) {
+      return
     }
-    setIsLoading(true);
+    if (!name || name.length > 120) {
+      setError('Enter a display name of 1 to 120 characters.')
+      return
+    }
+    setIsLoading(true)
     try {
-      const result = await authClient.updateUser({name});
-      if (result.error) throw new Error(result.error.message ?? 'Could not save display name.');
-      setSavedName(name);
-      update('displayName', name);
-      setError('');
+      const result = await authClient.updateUser({ name })
+      if (result.error) {
+        throw new Error(result.error.message ?? 'Could not save display name.')
+      }
+      setSavedName(name)
+      update('displayName', name)
+      setError('')
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason))
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
   }
 
-  return <TextInput
-    label="Display name"
-    isLabelHidden
-    size="sm"
-    width={CONTROL_WIDTH}
-    value={settings.displayName}
-    onChange={value => {update('displayName', value); setError('');}}
-    onBlur={save}
-    onEnter={save}
-    isLoading={isLoading}
-    status={error ? {type: 'error', message: error} : undefined}
-  />;
+  return (
+    <TextInput
+      label="Display name"
+      isLabelHidden
+      size="sm"
+      width={CONTROL_WIDTH}
+      value={settings.displayName}
+      onChange={(value) => {
+        update('displayName', value)
+        setError('')
+      }}
+      onBlur={save}
+      onEnter={save}
+      isLoading={isLoading}
+      {...definedProps({ status: error ? { type: 'error' as const, message: error } : undefined })}
+    />
+  )
 }
 
 function CurrentSession() {
-  const account = useContext(AccountContext)!;
-  const [error, setError] = useState('');
+  const account = requiredValue(useContext(AccountContext))
+  const [error, setError] = useState('')
   async function signOut() {
     try {
-      const result = await authClient.signOut();
-      if (result.error) throw new Error(result.error.message ?? 'Sign-out failed.');
-      location.reload();
+      const result = await authClient.signOut()
+      if (result.error) {
+        throw new Error(result.error.message ?? 'Sign-out failed.')
+      }
+      location.reload()
     } catch (reason) {
-      setError(errorMessage(reason));
+      setError(errorMessage(reason))
     }
   }
-  return <SettingsRow
-    title="Current session"
-    titleAccessory={<Token label="This device" size="sm" />}
-    description={account.email}
-    icon={ComputerDesktopIcon}
-    control={<Button label="Sign out" variant="ghost" size="sm" clickAction={signOut} />}
-    detail={error && <Text role="alert">{error}</Text>}
-  />;
+  return (
+    <SettingsRow
+      title="Current session"
+      titleAccessory={<Token label="This device" size="sm" />}
+      description={account.email}
+      icon={ComputerDesktopIcon}
+      control={<Button label="Sign out" variant="ghost" size="sm" clickAction={signOut} />}
+      detail={error && <Text role="alert">{error}</Text>}
+    />
+  )
 }
 
-function ProfilePanel({settings, update}: PanelProps) {
+function ProfilePanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="Identity">
@@ -904,7 +895,7 @@ function ProfilePanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.jobTitle}
-              onChange={value => update('jobTitle', value)}
+              onChange={(value) => update('jobTitle', value)}
             />
           }
         />
@@ -918,12 +909,12 @@ function ProfilePanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.pronouns}
-              onChange={value => update('pronouns', value)}
+              onChange={(value) => update('pronouns', value)}
               options={[
-                {value: 'none', label: 'Not specified'},
-                {value: 'they', label: 'they/them'},
-                {value: 'she', label: 'she/her'},
-                {value: 'he', label: 'he/him'},
+                { value: 'none', label: 'Not specified' },
+                { value: 'they', label: 'they/them' },
+                { value: 'she', label: 'she/her' },
+                { value: 'he', label: 'he/him' },
               ]}
             />
           }
@@ -935,14 +926,7 @@ function ProfilePanel({settings, update}: PanelProps) {
           title="Show my local time"
           icon={ClockIcon}
           description="Helps people across time zones pick a sane hour."
-          control={
-            <Switch
-              label="Show my local time"
-              isLabelHidden
-              value={settings.showLocalTime}
-              onChange={value => update('showLocalTime', value)}
-            />
-          }
+          control={<Switch label="Show my local time" isLabelHidden value={settings.showLocalTime} onChange={(value) => update('showLocalTime', value)} />}
         />
         <SettingsRow
           title="Presence"
@@ -954,21 +938,21 @@ function ProfilePanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.presence}
-              onChange={value => update('presence', value)}
+              onChange={(value) => update('presence', value)}
               options={[
-                {value: 'available', label: 'Available'},
-                {value: 'busy', label: 'Busy'},
-                {value: 'away', label: 'Away'},
+                { value: 'available', label: 'Available' },
+                { value: 'busy', label: 'Busy' },
+                { value: 'away', label: 'Away' },
               ]}
             />
           }
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
-function SecurityPanel({settings, update}: PanelProps) {
+function SecurityPanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="Sign-in">
@@ -983,14 +967,7 @@ function SecurityPanel({settings, update}: PanelProps) {
           titleAccessory={<Token label="Recommended" size="sm" color="green" />}
           description="Ask for a code from your authenticator app at sign-in."
           icon={ShieldCheckIcon}
-          control={
-            <Switch
-              label="Two-factor authentication"
-              isLabelHidden
-              value={settings.twoFactor}
-              onChange={value => update('twoFactor', value)}
-            />
-          }
+          control={<Switch label="Two-factor authentication" isLabelHidden value={settings.twoFactor} onChange={(value) => update('twoFactor', value)} />}
         />
         <SettingsRow
           title="Passkeys"
@@ -1016,10 +993,10 @@ function SecurityPanel({settings, update}: PanelProps) {
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
-function BillingPanel({settings, update}: PanelProps) {
+function BillingPanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="Plan">
@@ -1034,9 +1011,7 @@ function BillingPanel({settings, update}: PanelProps) {
           title="Seats"
           icon={UsersIcon}
           description="18 of 25 seats in use."
-          control={
-            <Button label="Manage seats" variant="secondary" size="sm" />
-          }
+          control={<Button label="Manage seats" variant="secondary" size="sm" />}
         />
       </SettingsCard>
 
@@ -1053,7 +1028,7 @@ function BillingPanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.billingEmail}
-              onChange={value => update('billingEmail', value)}
+              onChange={(value) => update('billingEmail', value)}
             />
           }
         />
@@ -1061,14 +1036,7 @@ function BillingPanel({settings, update}: PanelProps) {
           title="Email invoices"
           icon={ReceiptPercentIcon}
           description="Send a PDF copy every time we charge the card."
-          control={
-            <Switch
-              label="Email invoices"
-              isLabelHidden
-              value={settings.emailInvoices}
-              onChange={value => update('emailInvoices', value)}
-            />
-          }
+          control={<Switch label="Email invoices" isLabelHidden value={settings.emailInvoices} onChange={(value) => update('emailInvoices', value)} />}
         />
         <SettingsRow
           title="Payment method"
@@ -1078,7 +1046,7 @@ function BillingPanel({settings, update}: PanelProps) {
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -1102,7 +1070,7 @@ function BillingPanel({settings, update}: PanelProps) {
  * with no copied colours. This template uses the bundled neutral theme—the
  * same stable composition used by the docsite and generated applications.
  */
-function ThemePreviewCanvas({mode}: {mode: 'light' | 'dark'}) {
+function ThemePreviewCanvas({ mode }: { mode: 'light' | 'dark' }) {
   const canvas = (
     // No Cards here. A Card's default variant owns a border, and nesting one
     // inside a selected SelectableCard produced three competing outlines: the
@@ -1115,19 +1083,14 @@ function ThemePreviewCanvas({mode}: {mode: 'light' | 'dark'}) {
         <VStack xstyle={preview.bar} />
       </VStack>
       <StackItem size="fill">
-        <VStack
-          padding={2}
-          gap={1}
-          justify="center"
-          height="100%"
-          xstyle={preview.contentSurface}>
-          {[0, 1, 2].map(row => (
+        <VStack padding={2} gap={1} justify="center" height="100%" xstyle={preview.contentSurface}>
+          {[0, 1, 2].map((row) => (
             <VStack key={row} xstyle={preview.bar} />
           ))}
         </VStack>
       </StackItem>
     </VStack>
-  );
+  )
 
   return (
     // Use the bundled theme directly rather than discovering the ambient theme
@@ -1138,10 +1101,10 @@ function ThemePreviewCanvas({mode}: {mode: 'light' | 'dark'}) {
     <Theme theme={neutralTheme} mode={mode}>
       {canvas}
     </Theme>
-  );
+  )
 }
 
-function ThemePreviewMock({scheme}: {scheme: 'light' | 'dark' | 'system'}) {
+function ThemePreviewMock({ scheme }: { scheme: 'light' | 'dark' | 'system' }) {
   return (
     // One AspectRatio path for every option. System splits that same 3:2 frame
     // into two equal regions rather than drawing two full windows on top of one
@@ -1162,24 +1125,24 @@ function ThemePreviewMock({scheme}: {scheme: 'light' | 'dark' | 'system'}) {
         )}
       </VStack>
     </AspectRatio>
-  );
+  )
 }
 
 const THEME_CHOICES: {
-  value: string;
-  label: string;
-  scheme: 'light' | 'dark' | 'system';
-  icon: IconComponent;
+  value: string
+  label: string
+  scheme: 'light' | 'dark' | 'system'
+  icon: IconComponent
 }[] = [
-  {value: 'light', label: 'Light', scheme: 'light', icon: SunIcon},
-  {value: 'dark', label: 'Dark', scheme: 'dark', icon: MoonIcon},
+  { value: 'light', label: 'Light', scheme: 'light', icon: SunIcon },
+  { value: 'dark', label: 'Dark', scheme: 'dark', icon: MoonIcon },
   {
     value: 'system',
     label: 'System',
     scheme: 'system',
     icon: ComputerDesktopIcon,
   },
-];
+]
 
 /**
  * The choices as pictures of what they do, the way macOS and VS Code put
@@ -1210,28 +1173,23 @@ const THEME_CHOICES: {
  * `getByRole('checkbox').click()` aims at an element the card's own content
  * covers, and times out on a control a user can click perfectly well.
  */
-function ThemeChoiceCards({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
+function ThemeChoiceCards({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <Grid
       role="radiogroup"
       aria-label="Color theme"
       // Three across wherever three fit; below that the icon and the name stop
       // fitting the card, so the grid folds rather than drawing slivers.
-      columns={{minWidth: 96, max: 3}}
+      columns={{ minWidth: 96, max: 3 }}
       gap={2}
       // Capped, or the tiles grow with the dialog: three stretched tracks in a
       // 1120px shell make a ~250px picture of a window per option, which is a
       // hero image rather than a control. The cap holds them at a size the row
       // can carry, and the grid still folds to two-then-one below it.
-      maxWidth={480}>
-      {THEME_CHOICES.map(choice => {
-        const isSelected = choice.value === value;
+      maxWidth={480}
+    >
+      {THEME_CHOICES.map((choice) => {
+        const isSelected = choice.value === value
         return (
           <SelectableCard
             key={choice.value}
@@ -1243,41 +1201,38 @@ function ThemeChoiceCards({
             onChange={() => {
               // Select-only: a card cannot deselect itself into "no theme".
               if (!isSelected) {
-                onChange(choice.value);
+                onChange(choice.value)
               }
-            }}>
+            }}
+          >
             <VStack gap={1.5}>
               <ThemePreviewMock scheme={choice.scheme} />
               <HStack gap={1} align="center" justify="center">
                 <Icon icon={choice.icon} size="sm" color="secondary" />
-                <Text
-                  type="supporting"
-                  weight={isSelected ? 'semibold' : undefined}>
+                <Text type="supporting" {...definedProps({ weight: isSelected ? 'semibold' : undefined })}>
                   {choice.label}
                 </Text>
               </HStack>
             </VStack>
           </SelectableCard>
-        );
+        )
       })}
     </Grid>
-  );
+  )
 }
 
-const INTERFACE_FONTS: {value: string; label: string; stack: string}[] = [
-  {value: 'system', label: 'System', stack: 'var(--font-family-body)'},
-  {value: 'serif', label: 'Serif', stack: 'Georgia, "Times New Roman", serif'},
+const INTERFACE_FONTS: { value: string; label: string; stack: string }[] = [
+  { value: 'system', label: 'System', stack: 'var(--font-family-body)' },
+  { value: 'serif', label: 'Serif', stack: 'Georgia, "Times New Roman", serif' },
   {
     value: 'mono',
     label: 'Monospace',
     stack: 'var(--font-family-code)',
   },
-];
+]
 
 function interfaceFont(value: string) {
-  return (
-    INTERFACE_FONTS.find(font => font.value === value) ?? INTERFACE_FONTS[0]
-  );
+  return INTERFACE_FONTS.find((font) => font.value === value) ?? requiredValue(INTERFACE_FONTS[0])
 }
 
 /**
@@ -1293,8 +1248,8 @@ function interfaceFont(value: string) {
  * It sits on the dialog's canvas inside the card's muted fill, so it reads as a
  * window onto another surface rather than as more of the settings form.
  */
-function FontPreview({value}: {value: string}) {
-  const font = interfaceFont(value);
+function FontPreview({ value }: { value: string }) {
+  const font = interfaceFont(value)
   return (
     // A `default` Card — the white one — inside the group's muted fill. The
     // sample is a window onto another surface, and the two variants are what
@@ -1310,10 +1265,10 @@ function FontPreview({value}: {value: string}) {
         </Text>
       </VStack>
     </Card>
-  );
+  )
 }
 
-function AppearancePanel({settings, update}: PanelProps) {
+function AppearancePanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       {/* Unlabelled on purpose: a "Theme" heading under an "Appearance" title
@@ -1323,12 +1278,7 @@ function AppearancePanel({settings, update}: PanelProps) {
           title="Color theme"
           icon={PaintBrushIcon}
           description="Applies to this browser only."
-          detail={
-            <ThemeChoiceCards
-              value={settings.theme}
-              onChange={value => update('theme', value)}
-            />
-          }
+          detail={<ThemeChoiceCards value={settings.theme} onChange={(value) => update('theme', value)} />}
         />
         <SettingsRow
           title="Accent color"
@@ -1341,12 +1291,12 @@ function AppearancePanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.accent}
-              onChange={value => update('accent', value)}
+              onChange={(value) => update('accent', value)}
               options={[
-                {value: 'blue', label: 'Blue'},
-                {value: 'teal', label: 'Teal'},
-                {value: 'purple', label: 'Purple'},
-                {value: 'orange', label: 'Orange'},
+                { value: 'blue', label: 'Blue' },
+                { value: 'teal', label: 'Teal' },
+                { value: 'purple', label: 'Purple' },
+                { value: 'orange', label: 'Orange' },
               ]}
             />
           }
@@ -1365,8 +1315,8 @@ function AppearancePanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.font}
-              onChange={value => update('font', value)}
-              options={INTERFACE_FONTS.map(font => ({
+              onChange={(value) => update('font', value)}
+              options={INTERFACE_FONTS.map((font) => ({
                 value: font.value,
                 label: font.label,
               }))}
@@ -1382,11 +1332,7 @@ function AppearancePanel({settings, update}: PanelProps) {
           icon={Bars3Icon}
           description="How much breathing room rows and lists get."
           control={
-            <SegmentedControl
-              label="Interface density"
-              size="sm"
-              value={settings.density}
-              onChange={value => update('density', value)}>
+            <SegmentedControl label="Interface density" size="sm" value={settings.density} onChange={(value) => update('density', value)}>
               <SegmentedControlItem value="comfortable" label="Comfortable" />
               <SegmentedControlItem value="compact" label="Compact" />
             </SegmentedControl>
@@ -1396,21 +1342,14 @@ function AppearancePanel({settings, update}: PanelProps) {
           title="Reduce motion"
           icon={HandRaisedIcon}
           description="Skip transitions and animated transforms."
-          control={
-            <Switch
-              label="Reduce motion"
-              isLabelHidden
-              value={settings.reduceMotion}
-              onChange={value => update('reduceMotion', value)}
-            />
-          }
+          control={<Switch label="Reduce motion" isLabelHidden value={settings.reduceMotion} onChange={(value) => update('reduceMotion', value)} />}
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
-function NotificationsPanel({settings, update}: PanelProps) {
+function NotificationsPanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="Email">
@@ -1418,40 +1357,19 @@ function NotificationsPanel({settings, update}: PanelProps) {
           title="Mentions"
           description="Someone types your name."
           icon={AtSymbolIcon}
-          control={
-            <Switch
-              label="Email me about mentions"
-              isLabelHidden
-              value={settings.emailMentions}
-              onChange={value => update('emailMentions', value)}
-            />
-          }
+          control={<Switch label="Email me about mentions" isLabelHidden value={settings.emailMentions} onChange={(value) => update('emailMentions', value)} />}
         />
         <SettingsRow
           title="Comments"
           description="Replies on threads you are part of."
           icon={ChatBubbleLeftRightIcon}
-          control={
-            <Switch
-              label="Email me about comments"
-              isLabelHidden
-              value={settings.emailComments}
-              onChange={value => update('emailComments', value)}
-            />
-          }
+          control={<Switch label="Email me about comments" isLabelHidden value={settings.emailComments} onChange={(value) => update('emailComments', value)} />}
         />
         <SettingsRow
           title="Weekly digest"
           description="One summary every Monday morning."
           icon={EnvelopeIcon}
-          control={
-            <Switch
-              label="Send the weekly digest"
-              isLabelHidden
-              value={settings.weeklyDigest}
-              onChange={value => update('weeklyDigest', value)}
-            />
-          }
+          control={<Switch label="Send the weekly digest" isLabelHidden value={settings.weeklyDigest} onChange={(value) => update('weeklyDigest', value)} />}
         />
       </SettingsCard>
 
@@ -1460,26 +1378,12 @@ function NotificationsPanel({settings, update}: PanelProps) {
           title="Desktop notifications"
           icon={ComputerDesktopIcon}
           description="Requires permission from your browser."
-          control={
-            <Switch
-              label="Desktop notifications"
-              isLabelHidden
-              value={settings.desktopAlerts}
-              onChange={value => update('desktopAlerts', value)}
-            />
-          }
+          control={<Switch label="Desktop notifications" isLabelHidden value={settings.desktopAlerts} onChange={(value) => update('desktopAlerts', value)} />}
         />
         <SettingsRow
           title="Play a sound"
           icon={SpeakerWaveIcon}
-          control={
-            <Switch
-              label="Play a sound"
-              isLabelHidden
-              value={settings.notificationSounds}
-              onChange={value => update('notificationSounds', value)}
-            />
-          }
+          control={<Switch label="Play a sound" isLabelHidden value={settings.notificationSounds} onChange={(value) => update('notificationSounds', value)} />}
         />
         <SettingsRow
           title="Quiet hours"
@@ -1492,18 +1396,18 @@ function NotificationsPanel({settings, update}: PanelProps) {
               size="sm"
               width={CONTROL_WIDTH}
               value={settings.quietHours}
-              onChange={value => update('quietHours', value)}
+              onChange={(value) => update('quietHours', value)}
               options={[
-                {value: 'none', label: 'Off'},
-                {value: 'evening', label: '18:00 – 09:00'},
-                {value: 'night', label: '22:00 – 07:00'},
+                { value: 'none', label: 'Off' },
+                { value: 'evening', label: '18:00 – 09:00' },
+                { value: 'night', label: '22:00 – 07:00' },
               ]}
             />
           }
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -1512,17 +1416,17 @@ function NotificationsPanel({settings, update}: PanelProps) {
 
 interface Chord {
   /** The platform's command key — ⌘ on a Mac, Ctrl elsewhere. `Kbd` decides. */
-  mod?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-  key: string;
+  mod?: boolean
+  shift?: boolean
+  alt?: boolean
+  key: string
 }
 
 interface ShortcutDef {
-  id: string;
-  label: string;
-  icon: IconComponent;
-  binding: Chord;
+  id: string
+  label: string
+  icon: IconComponent
+  binding: Chord
 }
 
 const SHORTCUTS: ShortcutDef[] = [
@@ -1530,39 +1434,39 @@ const SHORTCUTS: ShortcutDef[] = [
     id: 'search',
     label: 'Search everything',
     icon: MagnifyingGlassIcon,
-    binding: {mod: true, key: 'k'},
+    binding: { mod: true, key: 'k' },
   },
   {
     id: 'new',
     label: 'New item',
     icon: PencilSquareIcon,
-    binding: {mod: true, key: 'n'},
+    binding: { mod: true, key: 'n' },
   },
   {
     id: 'save',
     label: 'Save',
     icon: ArrowDownOnSquareIcon,
-    binding: {mod: true, key: 's'},
+    binding: { mod: true, key: 's' },
   },
   {
     id: 'settings',
     label: 'Open settings',
     icon: Cog6ToothIcon,
-    binding: {mod: true, key: ','},
+    binding: { mod: true, key: ',' },
   },
   {
     id: 'sidebar',
     label: 'Toggle the sidebar',
     icon: Bars3BottomLeftIcon,
-    binding: {mod: true, shift: true, key: 'b'},
+    binding: { mod: true, shift: true, key: 'b' },
   },
   {
     id: 'help',
     label: 'Shortcut cheat sheet',
     icon: QuestionMarkCircleIcon,
-    binding: {shift: true, key: '?'},
+    binding: { shift: true, key: '?' },
   },
-];
+]
 
 /**
  * `KeyboardEvent.key` names `Kbd` does not already understand.
@@ -1579,7 +1483,7 @@ const KBD_KEY_NAMES: Record<string, string> = {
   ArrowRight: 'right',
   '+': 'plus',
   ' ': 'space',
-};
+}
 
 /**
  * A chord as `Kbd`'s `keys` string — the whole thing in one component,
@@ -1590,38 +1494,38 @@ const KBD_KEY_NAMES: Record<string, string> = {
  * `navigator.platform` check it agrees with its own server render.
  */
 function chordKeys(chord: Chord): string {
-  const parts: string[] = [];
+  const parts: string[] = []
   if (chord.mod) {
-    parts.push('mod');
+    parts.push('mod')
   }
   if (chord.shift) {
-    parts.push('shift');
+    parts.push('shift')
   }
   if (chord.alt) {
-    parts.push('alt');
+    parts.push('alt')
   }
-  parts.push(KBD_KEY_NAMES[chord.key] ?? chord.key);
-  return parts.join('+');
+  parts.push(KBD_KEY_NAMES[chord.key] ?? chord.key)
+  return parts.join('+')
 }
 
 /** The chord as words, for the accessible name behind the keycaps. */
 function chordLabel(chord: Chord): string {
-  const parts: string[] = [];
+  const parts: string[] = []
   if (chord.mod) {
-    parts.push('Mod');
+    parts.push('Mod')
   }
   if (chord.shift) {
-    parts.push('Shift');
+    parts.push('Shift')
   }
   if (chord.alt) {
-    parts.push('Alt');
+    parts.push('Alt')
   }
-  parts.push(chord.key === ' ' ? 'Space' : chord.key.toUpperCase());
-  return parts.join(' + ');
+  parts.push(chord.key === ' ' ? 'Space' : chord.key.toUpperCase())
+  return parts.join(' + ')
 }
 
 /** Wide enough to hold a chord like ⌘⇧F without the row jumping. */
-const RECORDER_WIDTH = 96;
+const RECORDER_WIDTH = 96
 
 /**
  * The rebinding capture: an input that swallows every keystroke and reports the
@@ -1633,25 +1537,19 @@ const RECORDER_WIDTH = 96;
  * `isReadOnly` equivalent that keeps focus, so the value is pinned to `""` and
  * every keydown is `preventDefault`ed — which is what keeps it empty.
  */
-function ShortcutRecorder({
-  onCapture,
-  onCancel,
-}: {
-  onCapture: (chord: Chord) => void;
-  onCancel: () => void;
-}) {
+function ShortcutRecorder({ onCapture, onCancel }: { onCapture: (chord: Chord) => void; onCancel: () => void }) {
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
+      event.preventDefault()
+      event.stopPropagation()
 
       if (event.key === 'Escape') {
-        onCancel();
-        return;
+        onCancel()
+        return
       }
       // A modifier alone is not a chord — wait for the key it modifies.
       if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) {
-        return;
+        return
       }
 
       onCapture({
@@ -1659,10 +1557,10 @@ function ShortcutRecorder({
         shift: event.shiftKey,
         alt: event.altKey,
         key: event.key,
-      });
+      })
     },
     [onCapture, onCancel],
-  );
+  )
 
   return (
     <TextInput
@@ -1678,7 +1576,7 @@ function ShortcutRecorder({
       onKeyDown={handleKeyDown}
       onBlur={onCancel}
     />
-  );
+  )
 }
 
 function ShortcutRow({
@@ -1690,15 +1588,15 @@ function ShortcutRow({
   onToggle,
   onReset,
 }: {
-  def: ShortcutDef;
-  chord: Chord;
-  isEnabled: boolean;
-  isCustom: boolean;
-  onRebind: (chord: Chord) => void;
-  onToggle: () => void;
-  onReset: () => void;
+  def: ShortcutDef
+  chord: Chord
+  isEnabled: boolean
+  isCustom: boolean
+  onRebind: (chord: Chord) => void
+  onToggle: () => void
+  onReset: () => void
 }) {
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecording, setIsRecording] = useState(false)
 
   return (
     <SettingsRow
@@ -1717,12 +1615,12 @@ function ShortcutRow({
           )}
           {isRecording ? (
             <ShortcutRecorder
-              onCapture={next => {
-                onRebind(next);
-                setIsRecording(false);
+              onCapture={(next) => {
+                onRebind(next)
+                setIsRecording(false)
               }}
               onCancel={() => {
-                setIsRecording(false);
+                setIsRecording(false)
               }}
             />
           ) : (
@@ -1739,28 +1637,21 @@ function ShortcutRow({
               variant="ghost"
               size="sm"
               isDisabled={!isEnabled}
-              tooltip={
-                isEnabled ? 'Click to change' : 'Switch it on to rebind it'
-              }
+              tooltip={isEnabled ? 'Click to change' : 'Switch it on to rebind it'}
               onClick={() => {
-                setIsRecording(true);
-              }}>
+                setIsRecording(true)
+              }}
+            >
               {isEnabled ? <Kbd keys={chordKeys(chord)} /> : undefined}
             </Button>
           )}
           <Tooltip content={isEnabled ? 'Disable' : 'Enable'}>
-            <Switch
-              size="sm"
-              label={`${def.label} shortcut`}
-              isLabelHidden
-              value={isEnabled}
-              onChange={onToggle}
-            />
+            <Switch size="sm" label={`${def.label} shortcut`} isLabelHidden value={isEnabled} onChange={onToggle} />
           </Tooltip>
         </HStack>
       }
     />
-  );
+  )
 }
 
 /**
@@ -1772,27 +1663,27 @@ function ShortcutRow({
  * comparison against defaults that has to be kept honest.
  */
 function ShortcutsPanel() {
-  const [overrides, setOverrides] = useState<Record<string, Chord | false>>({});
+  const [overrides, setOverrides] = useState<Record<string, Chord | false>>({})
 
-  const resolve = (def: ShortcutDef) => overrides[def.id] ?? def.binding;
-  const hasOverrides = Object.keys(overrides).length > 0;
+  const resolve = (def: ShortcutDef) => overrides[def.id] ?? def.binding
+  const hasOverrides = Object.keys(overrides).length > 0
 
   const setOverride = (id: string, value: Chord | false) => {
-    setOverrides(current => ({...current, [id]: value}));
-  };
+    setOverrides((current) => ({ ...current, [id]: value }))
+  }
   const clearOverride = (id: string) => {
-    setOverrides(current => {
-      const next = {...current};
-      Reflect.deleteProperty(next, id);
-      return next;
-    });
-  };
+    setOverrides((current) => {
+      const next = { ...current }
+      Reflect.deleteProperty(next, id)
+      return next
+    })
+  }
 
   return (
     <SettingsCard title="Shortcuts">
-      {SHORTCUTS.map(def => {
-        const resolved = resolve(def);
-        const isEnabled = resolved !== false;
+      {SHORTCUTS.map((def) => {
+        const resolved = resolve(def)
+        const isEnabled = resolved !== false
         return (
           <ShortcutRow
             key={def.id}
@@ -1803,21 +1694,21 @@ function ShortcutsPanel() {
             // restores the default — a reset button beside it would be a
             // second control for the same act.
             isCustom={overrides[def.id] != null && overrides[def.id] !== false}
-            onRebind={chord => {
-              setOverride(def.id, chord);
+            onRebind={(chord) => {
+              setOverride(def.id, chord)
             }}
             onToggle={() => {
               if (isEnabled) {
-                setOverride(def.id, false);
+                setOverride(def.id, false)
               } else {
-                clearOverride(def.id);
+                clearOverride(def.id)
               }
             }}
             onReset={() => {
-              clearOverride(def.id);
+              clearOverride(def.id)
             }}
           />
-        );
+        )
       })}
       {hasOverrides && (
         // A row of its own at the foot of the group, so it takes the card's
@@ -1831,17 +1722,17 @@ function ShortcutsPanel() {
               size="sm"
               icon={<Icon icon={ArrowUturnLeftIcon} size="sm" />}
               onClick={() => {
-                setOverrides({});
+                setOverrides({})
               }}
             />
           </HStack>
         </VStack>
       )}
     </SettingsCard>
-  );
+  )
 }
 
-function LanguagePanel({settings, update}: PanelProps) {
+function LanguagePanel({ settings, update }: PanelProps) {
   return (
     <SettingsCard title="Language & region">
       <SettingsRow
@@ -1855,13 +1746,13 @@ function LanguagePanel({settings, update}: PanelProps) {
             size="sm"
             width={CONTROL_WIDTH}
             value={settings.language}
-            onChange={value => update('language', value)}
+            onChange={(value) => update('language', value)}
             options={[
-              {value: 'en-US', label: 'English (US)'},
-              {value: 'en-GB', label: 'English (UK)'},
-              {value: 'fr', label: 'Français'},
-              {value: 'de', label: 'Deutsch'},
-              {value: 'ja', label: '日本語'},
+              { value: 'en-US', label: 'English (US)' },
+              { value: 'en-GB', label: 'English (UK)' },
+              { value: 'fr', label: 'Français' },
+              { value: 'de', label: 'Deutsch' },
+              { value: 'ja', label: '日本語' },
             ]}
           />
         }
@@ -1877,12 +1768,12 @@ function LanguagePanel({settings, update}: PanelProps) {
             size="sm"
             width={CONTROL_WIDTH}
             value={settings.region}
-            onChange={value => update('region', value)}
+            onChange={(value) => update('region', value)}
             options={[
-              {value: 'US', label: 'United States'},
-              {value: 'GB', label: 'United Kingdom'},
-              {value: 'DE', label: 'Germany'},
-              {value: 'JP', label: 'Japan'},
+              { value: 'US', label: 'United States' },
+              { value: 'GB', label: 'United Kingdom' },
+              { value: 'DE', label: 'Germany' },
+              { value: 'JP', label: 'Japan' },
             ]}
           />
         }
@@ -1898,17 +1789,17 @@ function LanguagePanel({settings, update}: PanelProps) {
             size="sm"
             width={CONTROL_WIDTH}
             value={settings.timezone}
-            onChange={value => update('timezone', value)}
+            onChange={(value) => update('timezone', value)}
             options={[
               // Zone first, offset second. Led by the offset, every option
               // starts with the same five characters and the list can only be
               // read to its end — and the longest of them then truncates
               // inside the control column.
-              {value: 'PT', label: 'Pacific (GMT-08:00)'},
-              {value: 'MT', label: 'Mountain (GMT-07:00)'},
-              {value: 'CT', label: 'Central (GMT-06:00)'},
-              {value: 'ET', label: 'Eastern (GMT-05:00)'},
-              {value: 'UTC', label: 'UTC (GMT+00:00)'},
+              { value: 'PT', label: 'Pacific (GMT-08:00)' },
+              { value: 'MT', label: 'Mountain (GMT-07:00)' },
+              { value: 'CT', label: 'Central (GMT-06:00)' },
+              { value: 'ET', label: 'Eastern (GMT-05:00)' },
+              { value: 'UTC', label: 'UTC (GMT+00:00)' },
             ]}
           />
         }
@@ -1917,21 +1808,17 @@ function LanguagePanel({settings, update}: PanelProps) {
         title="Start the week on"
         icon={CalendarDaysIcon}
         control={
-          <SegmentedControl
-            label="Start the week on"
-            size="sm"
-            value={settings.weekStart}
-            onChange={value => update('weekStart', value)}>
+          <SegmentedControl label="Start the week on" size="sm" value={settings.weekStart} onChange={(value) => update('weekStart', value)}>
             <SegmentedControlItem value="sun" label="Sunday" />
             <SegmentedControlItem value="mon" label="Monday" />
           </SegmentedControl>
         }
       />
     </SettingsCard>
-  );
+  )
 }
 
-function PrivacyPanel({settings, update}: PanelProps) {
+function PrivacyPanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="Visibility">
@@ -1939,40 +1826,19 @@ function PrivacyPanel({settings, update}: PanelProps) {
           title="Discoverable by email"
           icon={MagnifyingGlassIcon}
           description="Let people find your profile by searching your address."
-          control={
-            <Switch
-              label="Discoverable by email"
-              isLabelHidden
-              value={settings.discoverable}
-              onChange={value => update('discoverable', value)}
-            />
-          }
+          control={<Switch label="Discoverable by email" isLabelHidden value={settings.discoverable} onChange={(value) => update('discoverable', value)} />}
         />
         <SettingsRow
           title="Read receipts"
           icon={EyeIcon}
           description="Show people when you have read their message."
-          control={
-            <Switch
-              label="Read receipts"
-              isLabelHidden
-              value={settings.readReceipts}
-              onChange={value => update('readReceipts', value)}
-            />
-          }
+          control={<Switch label="Read receipts" isLabelHidden value={settings.readReceipts} onChange={(value) => update('readReceipts', value)} />}
         />
         <SettingsRow
           title="Activity status"
           icon={SignalIcon}
           description="Show a green dot while you are online."
-          control={
-            <Switch
-              label="Activity status"
-              isLabelHidden
-              value={settings.activityStatus}
-              onChange={value => update('activityStatus', value)}
-            />
-          }
+          control={<Switch label="Activity status" isLabelHidden value={settings.activityStatus} onChange={(value) => update('activityStatus', value)} />}
         />
       </SettingsCard>
 
@@ -1982,21 +1848,14 @@ function PrivacyPanel({settings, update}: PanelProps) {
           description="Use your activity to rank what you see first."
           icon={SparklesIcon}
           control={
-            <Switch
-              label="Personalized suggestions"
-              isLabelHidden
-              value={settings.personalization}
-              onChange={value => update('personalization', value)}
-            />
+            <Switch label="Personalized suggestions" isLabelHidden value={settings.personalization} onChange={(value) => update('personalization', value)} />
           }
         />
         <SettingsRow
           title="Export my data"
           description="We will email a download link within 24 hours."
           icon={ArrowDownTrayIcon}
-          control={
-            <Button label="Request export" variant="secondary" size="sm" />
-          }
+          control={<Button label="Request export" variant="secondary" size="sm" />}
         />
         <SettingsRow
           title="Delete my account"
@@ -2006,7 +1865,7 @@ function PrivacyPanel({settings, update}: PanelProps) {
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
 function IntegrationsPanel() {
@@ -2031,10 +1890,10 @@ function IntegrationsPanel() {
         control={<Button label="Connect" variant="secondary" size="sm" />}
       />
     </SettingsCard>
-  );
+  )
 }
 
-function DeveloperPanel({settings, update}: PanelProps) {
+function DeveloperPanel({ settings, update }: PanelProps) {
   return (
     <VStack gap={5}>
       <SettingsCard title="API">
@@ -2042,14 +1901,7 @@ function DeveloperPanel({settings, update}: PanelProps) {
           title="API access"
           description="Issue tokens that act on your behalf."
           icon={CodeBracketIcon}
-          control={
-            <Switch
-              label="API access"
-              isLabelHidden
-              value={settings.apiAccess}
-              onChange={value => update('apiAccess', value)}
-            />
-          }
+          control={<Switch label="API access" isLabelHidden value={settings.apiAccess} onChange={(value) => update('apiAccess', value)} />}
         />
         <SettingsRow
           title="Webhook URL"
@@ -2064,7 +1916,7 @@ function DeveloperPanel({settings, update}: PanelProps) {
               placeholder="https://example.com/hooks"
               isDisabled={!settings.apiAccess}
               value={settings.webhookUrl}
-              onChange={value => update('webhookUrl', value)}
+              onChange={(value) => update('webhookUrl', value)}
             />
           }
         />
@@ -2076,31 +1928,17 @@ function DeveloperPanel({settings, update}: PanelProps) {
           icon={BeakerIcon}
           titleAccessory={<Token label="Beta" size="sm" color="purple" />}
           description="Unfinished work, turned on for your account only."
-          control={
-            <Switch
-              label="Early access features"
-              isLabelHidden
-              value={settings.earlyAccess}
-              onChange={value => update('earlyAccess', value)}
-            />
-          }
+          control={<Switch label="Early access features" isLabelHidden value={settings.earlyAccess} onChange={(value) => update('earlyAccess', value)} />}
         />
         <SettingsRow
           title="Verbose logging"
           icon={DocumentMagnifyingGlassIcon}
           description="Write a detailed trace to the browser console."
-          control={
-            <Switch
-              label="Verbose logging"
-              isLabelHidden
-              value={settings.verboseLogging}
-              onChange={value => update('verboseLogging', value)}
-            />
-          }
+          control={<Switch label="Verbose logging" isLabelHidden value={settings.verboseLogging} onChange={(value) => update('verboseLogging', value)} />}
         />
       </SettingsCard>
     </VStack>
-  );
+  )
 }
 
 /**
@@ -2112,29 +1950,29 @@ function SettingsPanelBody({
   settings,
   update,
 }: {
-  panel: PanelId;
+  panel: PanelId
 } & PanelProps) {
   switch (panel) {
     case 'profile':
-      return <ProfilePanel settings={settings} update={update} />;
+      return <ProfilePanel settings={settings} update={update} />
     case 'security':
-      return <SecurityPanel settings={settings} update={update} />;
+      return <SecurityPanel settings={settings} update={update} />
     case 'billing':
-      return <BillingPanel settings={settings} update={update} />;
+      return <BillingPanel settings={settings} update={update} />
     case 'appearance':
-      return <AppearancePanel settings={settings} update={update} />;
+      return <AppearancePanel settings={settings} update={update} />
     case 'notifications':
-      return <NotificationsPanel settings={settings} update={update} />;
+      return <NotificationsPanel settings={settings} update={update} />
     case 'shortcuts':
-      return <ShortcutsPanel />;
+      return <ShortcutsPanel />
     case 'language':
-      return <LanguagePanel settings={settings} update={update} />;
+      return <LanguagePanel settings={settings} update={update} />
     case 'privacy':
-      return <PrivacyPanel settings={settings} update={update} />;
+      return <PrivacyPanel settings={settings} update={update} />
     case 'integrations':
-      return <IntegrationsPanel />;
+      return <IntegrationsPanel />
     case 'developer':
-      return <DeveloperPanel settings={settings} update={update} />;
+      return <DeveloperPanel settings={settings} update={update} />
   }
 }
 
@@ -2147,51 +1985,43 @@ function SettingsPanelBody({
  * `aria-activedescendant`. Split out of the dialog so the hub reads as wiring.
  */
 function useSettingsSearch(onSelectPanel: (panel: PanelId) => void) {
-  const [query, setQuery] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
 
-  const normalized = query.trim().toLowerCase();
-  const isActive = normalized.length > 0;
+  const normalized = query.trim().toLowerCase()
+  const isActive = normalized.length > 0
 
-  const results = useMemo(
-    () =>
-      isActive
-        ? SEARCHABLE_SETTINGS.filter(setting =>
-            settingMatchesSearch(setting, normalized),
-          )
-        : [],
-    [isActive, normalized],
-  );
+  const results = useMemo(() => (isActive ? SEARCHABLE_SETTINGS.filter((setting) => settingMatchesSearch(setting, normalized)) : []), [isActive, normalized])
 
   useEffect(() => {
-    setActiveIndex(0);
-  }, [normalized]);
+    setActiveIndex(0)
+  }, [normalized])
 
-  const onKeyDown: ComponentProps<'input'>['onKeyDown'] = event => {
+  const onKeyDown: ComponentProps<'input'>['onKeyDown'] = (event) => {
     if (event.key === 'Escape' && query) {
       // Clear before Escape reaches the Dialog, so the first press empties the
       // box and only the second closes the hub.
-      event.preventDefault();
-      setQuery('');
-      return;
+      event.preventDefault()
+      setQuery('')
+      return
     }
     if (!isActive || results.length === 0) {
-      return;
+      return
     }
     if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActiveIndex(index => (index + 1) % results.length);
+      event.preventDefault()
+      setActiveIndex((index) => (index + 1) % results.length)
     } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveIndex(index => (index - 1 + results.length) % results.length);
+      event.preventDefault()
+      setActiveIndex((index) => (index - 1 + results.length) % results.length)
     } else if (event.key === 'Enter') {
-      event.preventDefault();
-      const result = results[activeIndex];
+      event.preventDefault()
+      const result = results[activeIndex]
       if (result) {
-        onSelectPanel(result.panel);
+        onSelectPanel(result.panel)
       }
     }
-  };
+  }
 
   return {
     query,
@@ -2201,14 +2031,11 @@ function useSettingsSearch(onSelectPanel: (panel: PanelId) => void) {
     activeIndex,
     setActiveIndex,
     onKeyDown,
-    activeResultId:
-      isActive && results.length > 0
-        ? `settings-search-result-${activeIndex}`
-        : undefined,
-  };
+    activeResultId: isActive && results.length > 0 ? `settings-search-result-${activeIndex}` : undefined,
+  }
 }
 
-type SettingsSearch = ReturnType<typeof useSettingsSearch>;
+type SettingsSearch = ReturnType<typeof useSettingsSearch>
 
 function SettingsSearchResults({
   results,
@@ -2216,10 +2043,10 @@ function SettingsSearchResults({
   onActiveIndexChange,
   onSelect,
 }: {
-  results: SearchableSetting[];
-  activeIndex: number;
-  onActiveIndexChange: (index: number) => void;
-  onSelect: (setting: SearchableSetting) => void;
+  results: SearchableSetting[]
+  activeIndex: number
+  onActiveIndexChange: (index: number) => void
+  onSelect: (setting: SearchableSetting) => void
 }) {
   if (results.length === 0) {
     return (
@@ -2229,7 +2056,7 @@ function SettingsSearchResults({
           Try theme, notifications, or sessions.
         </Text>
       </VStack>
-    );
+    )
   }
 
   // `ListItem` rather than `SideNavItem`: these are listbox options, not
@@ -2241,13 +2068,7 @@ function SettingsSearchResults({
   // `aria-label` would vanish with no type error and no runtime warning, and
   // the input's `aria-controls` would point at nothing.
   return (
-    <VStack
-      as="ul"
-      gap={0}
-      id="settings-search-results"
-      role="listbox"
-      aria-label="Search results"
-      isScrollable>
+    <VStack as="ul" gap={0} id="settings-search-results" role="listbox" aria-label="Search results" isScrollable>
       {results.map((setting, index) => (
         <ListItem
           key={`${setting.panel}-${setting.title}`}
@@ -2255,29 +2076,23 @@ function SettingsSearchResults({
           role="option"
           aria-selected={index === activeIndex}
           label={setting.title}
-          description={`${panelConfig(setting.panel).label} · ${
-            setting.description
-          }`}
-          startContent={
-            <Icon icon={setting.icon} size="sm" color="secondary" />
-          }
-          endContent={
-            <Icon icon={ChevronRightIcon} size="sm" color="secondary" />
-          }
+          description={`${panelConfig(setting.panel).label} · ${setting.description}`}
+          startContent={<Icon icon={setting.icon} size="sm" color="secondary" />}
+          endContent={<Icon icon={ChevronRightIcon} size="sm" color="secondary" />}
           isSelected={index === activeIndex}
           onMouseEnter={() => onActiveIndexChange(index)}
           onClick={() => onSelect(setting)}
         />
       ))}
     </VStack>
-  );
+  )
 }
 
 /**
  * The search box, shared by both shells. `hasClear` gives the clear button and
  * its live status for free; only the RESULTS list is hand-built.
  */
-function SettingsSearchInput({search}: {search: SettingsSearch}) {
+function SettingsSearchInput({ search }: { search: SettingsSearch }) {
   return (
     <TextInput
       label="Search settings"
@@ -2303,7 +2118,7 @@ function SettingsSearchInput({search}: {search: SettingsSearch}) {
       onChange={search.setQuery}
       onKeyDown={search.onKeyDown}
     />
-  );
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -2321,10 +2136,10 @@ function SettingsSideNav({
   activePanel,
   onSelectPanel,
 }: {
-  titleId: string;
-  search: SettingsSearch;
-  activePanel: PanelId;
-  onSelectPanel: (panel: PanelId) => void;
+  titleId: string
+  search: SettingsSearch
+  activePanel: PanelId
+  onSelectPanel: (panel: PanelId) => void
 }) {
   return (
     <SideNav
@@ -2344,21 +2159,19 @@ function SettingsSideNav({
           </Heading>
         </HStack>
       }
-      topContent={<SettingsSearchInput search={search} />}>
+      topContent={<SettingsSearchInput search={search} />}
+    >
       {search.isActive ? (
         <SettingsSearchResults
           results={search.results}
           activeIndex={search.activeIndex}
           onActiveIndexChange={search.setActiveIndex}
-          onSelect={setting => onSelectPanel(setting.panel)}
+          onSelect={(setting) => onSelectPanel(setting.panel)}
         />
       ) : (
-        PANEL_GROUPS.map(group => (
-          <SideNavSection
-            key={group.label}
-            title={group.label}
-            xstyle={styles.sideNavSection}>
-            {group.panels.map(panel => (
+        PANEL_GROUPS.map((group) => (
+          <SideNavSection key={group.label} title={group.label} xstyle={styles.sideNavSection}>
+            {group.panels.map((panel) => (
               // Single-line by construction: `SideNavItem` has no description.
               // The same text is the content pane's subtitle, so nothing leaves
               // the surface.
@@ -2378,21 +2191,20 @@ function SettingsSideNav({
         ))
       )}
     </SideNav>
-  );
+  )
 }
 
 /** The panel's own heading — the content title, in both shells. */
-function SettingsPanelHeading({panel}: {panel: PanelId}) {
-  const config = panelConfig(panel);
+function SettingsPanelHeading({ panel }: { panel: PanelId }) {
+  const config = panelConfig(panel)
   return (
     <VStack gap={0.5}>
       <Heading level={2}>{config.label}</Heading>
       <Text type="supporting" color="secondary">
-        {config.description}
-        {' '}Template preferences are for preview. Your display name and current session are connected to Clausid.
+        {config.description} Template preferences are for preview. Your display name and current session are connected to Clausid.
       </Text>
     </VStack>
-  );
+  )
 }
 
 /**
@@ -2405,8 +2217,8 @@ function SettingsContentPane({
   update,
   onClose,
 }: {
-  panel: PanelId;
-  onClose: () => void;
+  panel: PanelId
+  onClose: () => void
 } & PanelProps) {
   return (
     <LayoutContent isScrollable padding={4}>
@@ -2417,13 +2229,7 @@ function SettingsContentPane({
           pane's top-right corner. */}
       <HStack width="100%" justify="end" xstyle={styles.closeAnchor}>
         <HStack xstyle={styles.closeBacking}>
-          <IconButton
-            label="Close"
-            variant="ghost"
-            size="sm"
-            icon={<Icon icon="close" size="sm" />}
-            onClick={onClose}
-          />
+          <IconButton label="Close" variant="ghost" size="sm" icon={<Icon icon="close" size="sm" />} onClick={onClose} />
         </HStack>
       </HStack>
       {/* The panel column: `@container`, so every row inside it stacks on the
@@ -2443,30 +2249,17 @@ function SettingsContentPane({
         <SettingsPanelBody panel={panel} settings={settings} update={update} />
       </VStack>
     </LayoutContent>
-  );
+  )
 }
 
 /**
  * The narrow-viewport panel picker: the same navigation laid on its side as a
  * scrolling strip of tabs.
  */
-function SettingsPanelTabs({
-  activePanel,
-  onSelectPanel,
-}: {
-  activePanel: PanelId;
-  onSelectPanel: (panel: PanelId) => void;
-}) {
+function SettingsPanelTabs({ activePanel, onSelectPanel }: { activePanel: PanelId; onSelectPanel: (panel: PanelId) => void }) {
   return (
-    <HStack
-      as="nav"
-      aria-label="Settings sections"
-      gap={1}
-      wrap="nowrap"
-      isScrollable
-      paddingInline={3}
-      paddingBlock={2}>
-      {PANELS.map(panel => (
+    <HStack as="nav" aria-label="Settings sections" gap={1} wrap="nowrap" isScrollable paddingInline={3} paddingBlock={2}>
+      {PANELS.map((panel) => (
         <Button
           key={panel.id}
           label={panel.label}
@@ -2477,7 +2270,7 @@ function SettingsPanelTabs({
         />
       ))}
     </HStack>
-  );
+  )
 }
 
 /**
@@ -2493,11 +2286,11 @@ function SettingsNarrowShell({
   onSelectPanel,
   onClose,
 }: {
-  titleId: string;
-  search: SettingsSearch;
-  activePanel: PanelId;
-  onSelectPanel: (panel: PanelId) => void;
-  onClose: () => void;
+  titleId: string
+  search: SettingsSearch
+  activePanel: PanelId
+  onSelectPanel: (panel: PanelId) => void
+  onClose: () => void
 } & PanelProps) {
   return (
     <VStack gap={0} height="100%">
@@ -2510,13 +2303,7 @@ function SettingsNarrowShell({
             Settings
           </Text>
         </StackItem>
-        <IconButton
-          label="Close"
-          variant="ghost"
-          size="sm"
-          icon={<Icon icon="close" size="sm" />}
-          onClick={onClose}
-        />
+        <IconButton label="Close" variant="ghost" size="sm" icon={<Icon icon="close" size="sm" />} onClick={onClose} />
       </HStack>
       <Divider />
       <VStack paddingInline={3} paddingBlock={2}>
@@ -2528,66 +2315,58 @@ function SettingsNarrowShell({
             results={search.results}
             activeIndex={search.activeIndex}
             onActiveIndexChange={search.setActiveIndex}
-            onSelect={setting => onSelectPanel(setting.panel)}
+            onSelect={(setting) => onSelectPanel(setting.panel)}
           />
         </VStack>
       ) : (
         <>
-          <SettingsPanelTabs
-            activePanel={activePanel}
-            onSelectPanel={onSelectPanel}
-          />
+          <SettingsPanelTabs activePanel={activePanel} onSelectPanel={onSelectPanel} />
           <Divider />
           <StackItem size="fill">
             {/* Same `@container` as the desktop pane, so a row stacks on the
                 width it was given in either shell. */}
-            <VStack
-              gap={4}
-              padding={4}
-              isScrollable
-              height="100%"
-              xstyle={row.panel}>
+            <VStack gap={4} padding={4} isScrollable height="100%" xstyle={row.panel}>
               <SettingsPanelHeading panel={activePanel} />
-              <SettingsPanelBody
-                panel={activePanel}
-                settings={settings}
-                update={update}
-              />
+              <SettingsPanelBody panel={activePanel} settings={settings} update={update} />
             </VStack>
           </StackItem>
         </>
       )}
     </VStack>
-  );
+  )
 }
 
 // Remove isInline for production — dialogs should be modal.
-export default function SettingsDialogTemplate({isOpen, onOpenChange, account}: {
-  isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
-  account: Account;
+export default function SettingsDialogTemplate({
+  isOpen,
+  onOpenChange,
+  account,
+}: {
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+  account: Account
 }) {
-  const [activePanel, setActivePanel] = useState<PanelId>(DEFAULT_PANEL);
-  const [settings, setSettings] = useState<SettingsState>(() => ({...INITIAL_SETTINGS, displayName: account.name}));
-  const titleId = useId();
+  const [activePanel, setActivePanel] = useState<PanelId>(DEFAULT_PANEL)
+  const [settings, setSettings] = useState<SettingsState>(() => ({ ...INITIAL_SETTINGS, displayName: account.name }))
+  const titleId = useId()
 
   // Below this the two-column shell is swapped for `SettingsNarrowShell`. NOT a
   // collapsed rail — `SettingsPanelTabs` records why that does not survive a
   // phone-width dialog.
-  const isNarrow = useMediaQuery(NARROW_VIEWPORT);
+  const isNarrow = useMediaQuery(NARROW_VIEWPORT)
 
   const update: UpdateSetting = (key, value) => {
-    setSettings(current => ({...current, [key]: value}));
-  };
+    setSettings((current) => ({ ...current, [key]: value }))
+  }
 
-  const search = useSettingsSearch(panel => {
-    selectPanel(panel);
-  });
+  const search = useSettingsSearch((panel) => {
+    selectPanel(panel)
+  })
 
   const selectPanel = (panel: PanelId) => {
-    setActivePanel(panel);
-    search.setQuery('');
-  };
+    setActivePanel(panel)
+    search.setQuery('')
+  }
 
   return (
     <AccountContext.Provider value={account}>
@@ -2598,7 +2377,8 @@ export default function SettingsDialogTemplate({isOpen, onOpenChange, account}: 
         width={1120}
         maxHeight="min(800px, calc(100dvh - 2rem))"
         padding={0}
-        aria-labelledby={titleId}>
+        aria-labelledby={titleId}
+      >
         {/* Two shells rather than one responsive one — see the module header.
             Both are wrapped in the one height, so the frame is the same on
             every panel and it is the panel that scrolls, not the dialog that
@@ -2616,26 +2396,12 @@ export default function SettingsDialogTemplate({isOpen, onOpenChange, account}: 
             />
           ) : (
             <Layout
-              start={
-                <SettingsSideNav
-                  titleId={titleId}
-                  search={search}
-                  activePanel={activePanel}
-                  onSelectPanel={selectPanel}
-                />
-              }
-              content={
-                <SettingsContentPane
-                  panel={activePanel}
-                  settings={settings}
-                  update={update}
-                  onClose={() => onOpenChange(false)}
-                />
-              }
+              start={<SettingsSideNav titleId={titleId} search={search} activePanel={activePanel} onSelectPanel={selectPanel} />}
+              content={<SettingsContentPane panel={activePanel} settings={settings} update={update} onClose={() => onOpenChange(false)} />}
             />
           )}
         </VStack>
       </Dialog>
     </AccountContext.Provider>
-  );
+  )
 }

@@ -1,15 +1,19 @@
 # Clausid architecture
 
-| Area | Boundary |
-| --- | --- |
-| [Web](../apps/web) | React and Astryx UI. Tiptap and Yjs provide collaborative editing and presence. LiveStore materializes authorized workflow data in memory. |
-| [Worker](../apps/worker) | Authorizes workspace and contract operations. SQLite-backed Durable Objects persist edits, membership, signing state, and artifacts. The account directory indexes contracts and reads consult current access. |
-| [Auth](../apps/auth) | Private Better Auth service with SQLite and SMTP. Owns verified email identities and sessions. |
-| [Shared contracts](../packages/contracts) | Shared request, response, and message schemas. |
-| [PDF processor](../packages/pdf-engine) | Rust/Wasm text rewrite engine used to apply approved replacements in imported contracts. The Worker keeps the original PDF, negotiated PDF, and annotation history, then freezes the reviewed bytes for signing. |
-| [VPS](../deploy) | Standalone workerd serves the Vite assets, API, and WebSocket through the host HTTPS proxy. Better Auth runs privately with SQLite and SMTP. |
-| [Cloudflare](cloudflare.md) | One Worker serves the app and uses managed SQLite Durable Objects, Better Auth on D1, and Cloudflare Email Service. |
-| [Offline operations](../packages/ops) | The Rust CLI verifies paired backup archives and the PDF digest in a signing evidence bundle. |
+| Area                                      | Boundary                                                                                                                                                                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Web](../apps/web)                        | React and Astryx UI. Tiptap and Yjs provide collaborative editing and presence. LiveStore materializes authorized workflow data in memory.                                                                       |
+| [Worker](../apps/worker)                  | Authorizes workspace and contract operations. SQLite-backed Durable Objects persist edits, membership, signing state, and artifacts. The account directory indexes contracts and reads consult current access.   |
+| [Auth](../apps/auth)                      | Private Better Auth service with SQLite and SMTP. Owns verified email identities and sessions.                                                                                                                   |
+| [Shared contracts](../packages/contracts) | Shared request, response, and message schemas.                                                                                                                                                                   |
+| [PDF processor](../packages/pdf-engine)   | Rust/Wasm text rewrite engine used to apply approved replacements in imported contracts. The Worker keeps the original PDF, negotiated PDF, and annotation history, then freezes the reviewed bytes for signing. |
+| [VPS](../deploy)                          | Standalone workerd serves the Vite assets, API, and WebSocket through the host HTTPS proxy. Better Auth runs privately with SQLite and SMTP.                                                                     |
+| [Cloudflare](cloudflare.md)               | One Worker serves the app and uses managed SQLite Durable Objects, Better Auth on D1, and Cloudflare Email Service.                                                                                              |
+| [Offline operations](../packages/ops)     | The Rust CLI verifies paired backup archives and the PDF digest in a signing evidence bundle.                                                                                                                    |
+| [Website](../apps/website)                | Independent Astro/Lumos marketing site. It shares the workspace toolchain, not Astryx app rules or application persistence.                                                                                      |
+
+Use the [code map](codebase.md) for file ownership and dependency rules, [domain contracts](contracts/index.md)
+for invariants and evidence, and [development](development.md) for bounded agent work and verification.
 
 The Directory namespace contains per-account objects for workspace access and contract indexes, and per-workspace objects for parties and invitations. A separate Contract namespace contains per-contract objects for edits, signing state, and PDF artifacts. Both deployment targets use the same logical object names.
 
@@ -25,3 +29,42 @@ Each workspace sharing instance already has its own SQLite database. A separate 
 2. The contract owner selects signers and generates a PDF preview of the current draft revision. Freeze requires a current, unexpired preview. The Worker stores the exact preview bytes as the frozen PDF and transitions to Awaiting signatures. A changed draft requires a new preview.
 3. Signatures bind the eligible verified account, consent version, frozen version ID, and digest. Signing requires a recent session. The contract becomes Signed when all required signers have signed.
 4. The evidence ZIP contains the frozen `contract.pdf` and `signing-evidence.json`. The recorded SHA-256 covers the exact bytes of `contract.pdf`. The manifest records consent and signatures separately.
+
+## Hosting adapters and configuration
+
+| Concern          | VPS / local workerd                                        | Cloudflare                                           |
+| ---------------- | ---------------------------------------------------------- | ---------------------------------------------------- |
+| Entry            | Worker build embedded by workerd configuration             | `apps/worker/src/cloudflare.ts`                      |
+| Identity         | Private Node Better Auth service                           | Better Auth through D1 adapter                       |
+| Application data | SQLite Durable Objects on one owned disk volume            | Managed SQLite Durable Objects                       |
+| Auth data        | Separate SQLite auth volume, WAL companions retained       | Managed D1 with explicit migrations                  |
+| Assets           | Built web directory through `WEB_DISK`                     | Wrangler `ASSETS` binding                            |
+| Email            | Private SMTP from auth process                             | Cloudflare Email Service                             |
+| Public transport | Host proxy terminates TLS and overwrites client-IP headers | Cloudflare request adapter supplies client address   |
+| Recovery         | Coordinated auth/contracts volumes and configuration       | Maintenance/inventory-coordinated D1/object recovery |
+
+Authoritative configuration is [workerd.capnp](../deploy/workerd.capnp),
+[Compose](../compose.yaml), [Wrangler](../wrangler.jsonc) and the corresponding adapters.
+The stable namespace keys are `clausid-contract-db-v1` and `clausid-directory-db-v1` for VPS.
+Changing those keys changes the persistence identity, not just a display label.
+
+`PUBLIC_ORIGIN` is one exact origin used for cookies, invitation links, origin enforcement and
+proxy behavior. `INTERNAL_AUTH_KEY` protects private service calls on VPS. `BETTER_AUTH_SECRET`
+must persist across restarts. Development uses isolated `CLAUSID_DATA_DIR` and coordinated Vite,
+workerd/auth and Mailpit ports; it must not share production storage.
+
+The auth SQLite store and application Durable Object disk are separate volumes. One workerd
+process owns a volume. Restarting a service is not a backup; restoring only one volume can
+invalidate identity, access and evidence relationships. See the [recovery reference](persistence-and-recovery.md).
+
+## Current versus proposed structure
+
+Workspace sharing currently lives in the Directory namespace. A separate Workspace actor is a
+possible later redesign, not part of this adoption. No new object namespace, SQL table layout or
+blob/object-store migration is introduced by the engineering program. Protocol/typing cleanup must
+continue reading legitimate existing optional/null records.
+
+For operation-by-operation data flow, write ordering and failure ownership read the
+[engineering codebase reference](codebase.md), not this deployment overview. For actual runtime
+qualification use [release qualification](runbooks/release-qualification.md); local bundle validation
+and source inspection do not establish hosted delivery or recovery.

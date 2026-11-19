@@ -17,10 +17,11 @@ const offsets = objects.map((object, i) => {
   return offset
 })
 const xref = pdf.length
-pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map(offset => String(offset).padStart(10, '0') + ' 00000 n \n').join('')}`
+pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => String(offset).padStart(10, '0') + ' 00000 n \n').join('')}`
 pdf += `trailer\n<< /Root 1 0 R /Size ${objects.length + 1} >>\nstartxref\n${xref}\n%%EOF\n`
 
 export const workspacePdf = Buffer.from(pdf, 'ascii')
 export const workspaceFixture = (recipient = 'fixture-party@example.com') => ({
-  team: [recipient], document: { name: 'Fixture contract.pdf', data: workspacePdf.toString('base64') },
+  team: [recipient],
+  document: { name: 'Fixture contract.pdf', data: workspacePdf.toString('base64') },
 })

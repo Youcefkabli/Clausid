@@ -1,3 +1,5 @@
+// Restore paired real auth/contract SQLite stores and verify access, draft bytes and signed evidence.
+import { previewSchema, workspaceSchema, workspacesSchema, contractViewSchema, serverMessageSchema } from '../packages/contracts/src/index.ts'
 import { workspaceFixture } from './workspace-fixture.ts'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -8,14 +10,15 @@ import { DatabaseSync } from 'node:sqlite'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import * as Y from 'yjs'
-import type { ServerMessage } from '../packages/contracts/src/index.ts'
 import { consentVersion } from '../packages/contracts/src/index.ts'
 import { linkFor } from './mailpit.ts'
 
 const origin = 'http://127.0.0.1:17887'
 
 async function stop(child: ChildProcess) {
-  if (child.exitCode !== null || child.signalCode !== null) return
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return
+  }
   const done = once(child, 'exit')
   child.kill('SIGTERM')
   await done
@@ -27,52 +30,92 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
   let data = join(root, 'source')
   const directory = () => join(data, 'contracts')
   const env: NodeJS.ProcessEnv = {
-    ...process.env, PUBLIC_ORIGIN: origin, AUTH_PORT: '17888', AUTH_HOST: '127.0.0.1',
-    INTERNAL_AUTH_KEY: randomBytes(32).toString('hex'), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
-    MAIL_FROM: 'Clausid test <mail@localhost.test>', SMTP_HOST: '127.0.0.1', SMTP_PORT: '1025',
+    ...process.env,
+    PUBLIC_ORIGIN: origin,
+    AUTH_PORT: '17888',
+    AUTH_HOST: '127.0.0.1',
+    INTERNAL_AUTH_KEY: randomBytes(32).toString('hex'),
+    BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
+    MAIL_FROM: 'Clausid test <mail@localhost.test>',
+    SMTP_HOST: '127.0.0.1',
+    SMTP_PORT: '1025',
   }
   const children: ChildProcess[] = []
   const context = await browser.newContext()
   const page = await context.newPage()
-  const request = await playwright.request.newContext({ baseURL: origin, extraHTTPHeaders: {
-    Origin: origin, 'X-Clausid-Client-IP': '127.0.0.1',
-  } })
+  const request = await playwright.request.newContext({
+    baseURL: origin,
+    extraHTTPHeaders: {
+      Origin: origin,
+      'X-Clausid-Client-IP': '127.0.0.1',
+    },
+  })
   const socket = async (id: string, edit?: { id: string; update: string }) => {
-    const reply = await page.evaluate(({ id, edit }) => new Promise<string[]>((done, reject) => {
-      const ws = new WebSocket(location.origin.replace('http:', 'ws:') + '/api/contracts/' + id + '/socket')
-      ws.addEventListener('close', () => reject(new Error('The test WebSocket closed before it acknowledged the draft.')))
-      ws.addEventListener('error', () => reject(new Error('The test WebSocket could not connect.')))
-      const messages: string[] = []
-      ws.onmessage = ({ data }) => {
-        const message = JSON.parse(data)
-        messages.push(data)
-        if (message.type === 'state' && edit) {
-          ws.send(JSON.stringify({ type: 'edit', ...edit }))
-        } else if (message.type === 'state' || message.type === 'ack' || message.type === 'error') {
-          done(messages)
-          ws.close()
-        }
-      }
-    }), { id, edit })
-    return reply.map((item) => JSON.parse(item) as ServerMessage)
+    const reply = await page.evaluate(
+      ({ id, edit }) =>
+        new Promise<string[]>((done, reject) => {
+          const ws = new WebSocket(location.origin.replace('http:', 'ws:') + '/api/contracts/' + id + '/socket')
+          ws.addEventListener('close', () => reject(new Error('The test WebSocket closed before it acknowledged the draft.')))
+          ws.addEventListener('error', () => reject(new Error('The test WebSocket could not connect.')))
+          const messages: string[] = []
+          ws.onmessage = ({ data }) => {
+            if (typeof data !== 'string') {
+              throw new Error('Expected a JSON socket frame.')
+            }
+            const message: unknown = JSON.parse(data)
+            const type: unknown = message !== null && typeof message === 'object' ? Reflect.get(message, 'type') : undefined
+            messages.push(data)
+            if (type === 'state' && edit) {
+              ws.send(JSON.stringify({ type: 'edit', ...edit }))
+            } else if (type === 'state' || type === 'ack' || type === 'error') {
+              done(messages)
+              ws.close()
+            }
+          }
+        }),
+      { id, edit },
+    )
+    return reply.map((item) => serverMessageSchema.parse(JSON.parse(item)))
   }
-  const startAuth = () => spawn(process.execPath, ['src/server.ts'], { cwd: 'apps/auth',
-    env: { ...env, AUTH_DB_PATH: join(data, 'auth', 'auth.sqlite') }, stdio: 'inherit' })
-  const startWorker = () => spawn('apps/worker/node_modules/workerd/bin/workerd', ['serve', 'deploy/workerd.capnp',
-    '--socket-addr', 'http=127.0.0.1:17887', '--external-addr', 'auth=127.0.0.1:17888',
-    '--directory-path', 'contractDisk=' + directory()], { env, stdio: 'inherit' })
+  const startAuth = () =>
+    spawn(process.execPath, ['src/server.ts'], { cwd: 'apps/auth', env: { ...env, AUTH_DB_PATH: join(data, 'auth', 'auth.sqlite') }, stdio: 'inherit' })
+  const startWorker = () =>
+    spawn(
+      'apps/worker/node_modules/workerd/bin/workerd',
+      [
+        'serve',
+        'deploy/workerd.capnp',
+        '--socket-addr',
+        'http=127.0.0.1:17887',
+        '--external-addr',
+        'auth=127.0.0.1:17888',
+        '--directory-path',
+        'contractDisk=' + directory(),
+      ],
+      { env, stdio: 'inherit' },
+    )
   async function waitForServices() {
-    await expect.poll(async () => {
-      try {
-        const result = await request.get('/api/auth/get-session')
-        return result.status()
-      } catch { return 0 }
-    }, { timeout: 10_000 }).toBe(200)
+    await expect
+      .poll(
+        async () => {
+          try {
+            const result = await request.get('/api/auth/get-session')
+            return result.status()
+          } catch {
+            return 0
+          }
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(200)
   }
   try {
     await mkdir(directory(), { recursive: true })
-    const migration = spawn(process.execPath, ['src/migrate.ts'], { cwd: 'apps/auth',
-      env: { ...env, AUTH_DB_PATH: join(data, 'auth', 'auth.sqlite') }, stdio: 'inherit' })
+    const migration = spawn(process.execPath, ['src/migrate.ts'], {
+      cwd: 'apps/auth',
+      env: { ...env, AUTH_DB_PATH: join(data, 'auth', 'auth.sqlite') },
+      stdio: 'inherit',
+    })
     expect((await once(migration, 'exit'))[0]).toBe(0)
     let auth = startAuth()
     let worker = startWorker()
@@ -92,12 +135,17 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
       expect((await request.post('/api/contracts', { data: { title, requestId: id } })).status()).toBe(201)
       await page.goto(origin + '/healthz')
       const [initial] = await socket(id)
-      if (initial.type !== 'state' || !initial.draft) throw new Error('No initial draft.')
+      if (!initial || initial.type !== 'state' || !initial.draft) {
+        throw new Error('No initial draft.')
+      }
       const draft = new Y.Doc()
       try {
         Y.applyUpdate(draft, Buffer.from(initial.draft, 'base64'))
         const before = Y.encodeStateVector(draft)
-        const paragraph = draft.getXmlFragment('default').get(0) as Y.XmlElement
+        const paragraph = draft.getXmlFragment('default').get(0)
+        if (!(paragraph instanceof Y.XmlElement)) {
+          throw new Error('Expected a paragraph in the restored document.')
+        }
         const text = new Y.XmlText()
         paragraph.insert(0, [text])
         text.insert(0, 'The agreement remains intact.')
@@ -105,12 +153,14 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
         const [, ack] = await socket(id, { id: crypto.randomUUID(), update })
         expect(ack).toMatchObject({ type: 'ack', revision: 1 })
         return { id, path: '/api/contracts/' + id }
-      } finally { draft.destroy() }
+      } finally {
+        draft.destroy()
+      }
     }
     const prepare = async ({ path }: { path: string }) => {
       const preview = await request.post(path + '/preview', { data: { revision: 1, signers: [email] } })
       expect(preview.status(), await preview.text()).toBe(200)
-      const { id: previewId, digest } = await preview.json()
+      const { id: previewId, digest } = previewSchema.parse(await preview.json())
       const freeze = await request.post(path + '/freeze', { data: { previewId } })
       expect(freeze.status(), await freeze.text()).toBe(200)
       return { versionId: previewId, digest, name: 'Restore Tester', consent: true, consentVersion }
@@ -119,7 +169,7 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
     const workspaceRequest = { name: 'Workspace to resume', requestId: crypto.randomUUID(), ...workspaceFixture() }
     const workspaceResponse = await request.post('/api/workspaces', { data: workspaceRequest })
     expect(workspaceResponse.status()).toBe(201)
-    const reservedAfterInitialization = (await workspaceResponse.json()).id
+    const reservedAfterInitialization = workspaceSchema.parse(await workspaceResponse.json()).id
     const beforeInitializationRequest = { name: 'Workspace to initialize', requestId: crypto.randomUUID(), ...workspaceFixture() }
     const reservedBeforeInitialization = crypto.randomUUID()
     const legacyId = crypto.randomUUID()
@@ -132,17 +182,14 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
 
     const contested = await makeDraft('Signing and voiding race')
     const racing = await prepare(contested)
-    const results = await Promise.all([
-      request.post(contested.path + '/sign', { data: racing }),
-      request.post(contested.path + '/void', { data: {} }),
-    ])
+    const results = await Promise.all([request.post(contested.path + '/sign', { data: racing }), request.post(contested.path + '/void', { data: {} })])
     expect(results.filter((item) => item.ok())).toHaveLength(1)
-    const resolved = await (await request.get(contested.path)).json()
+    const resolved = contractViewSchema.parse(await (await request.get(contested.path)).json())
     expect(['Signed', 'Voided']).toContain(resolved.status)
     if (resolved.status === 'Voided') {
       const copy = await request.post(contested.path + '/duplicate', { data: { title: 'Revised contract', requestId: crypto.randomUUID() } })
       expect(copy.status(), await copy.text()).toBe(201)
-      expect((await copy.json()).status).toBe('Draft')
+      expect(contractViewSchema.parse(await copy.json()).status).toBe('Draft')
     }
 
     await Promise.all([stop(worker), stop(auth)])
@@ -152,11 +199,15 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
     const accountNamespace = join(directory(), 'clausid-directory-db-v1')
     let seeded = false
     for (const file of await readdir(accountNamespace)) {
-      if (!/^[a-f0-9]{64}\.sqlite$/.test(file)) continue
+      if (!/^[a-f0-9]{64}\.sqlite$/.test(file)) {
+        continue
+      }
       const db = new DatabaseSync(join(accountNamespace, file))
       try {
         const pending = db.prepare('SELECT 1 FROM workspace_requests WHERE request_id = ?').get(workspaceRequest.requestId)
-        if (!pending) continue
+        if (!pending) {
+          continue
+        }
         // Simulate interrupted creation on either side of sharing initialization.
         db.prepare('UPDATE workspace_requests SET ready = 0 WHERE request_id = ?').run(workspaceRequest.requestId)
         const insert = db.prepare('INSERT INTO workspaces VALUES (?, ?, ?, ?)')
@@ -174,7 +225,7 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
     worker = startWorker()
     children.push(auth, worker)
     await waitForServices()
-    const listing = await (await request.get('/api/workspaces')).json()
+    const listing = workspacesSchema.parse(await (await request.get('/api/workspaces')).json())
     expect(listing).toEqual([expect.objectContaining({ id: legacyId })])
     for (const [input, reserved] of [
       [workspaceRequest, reservedAfterInitialization],
@@ -182,19 +233,23 @@ test('restoring both SQLite volumes preserves the draft, account, and signing ev
     ] as const) {
       const response = await request.post('/api/workspaces', { data: input })
       expect(response.status()).toBe(201)
-      expect((await response.json()).id).toBe(reserved)
+      expect(workspaceSchema.parse(await response.json()).id).toBe(reserved)
       expect((await request.get('/api/workspaces/' + reserved + '/parties')).status()).toBe(200)
     }
     expect((await request.get('/api/workspaces/' + legacyId + '/parties')).status()).toBe(200)
     await expect.poll(async () => (await request.get(draft.path)).status()).toBe(200)
     const [restoredDraft] = await socket(draft.id)
     expect(restoredDraft).toMatchObject({ type: 'state', contract: { revision: 1, status: 'Draft' } })
-    if (restoredDraft.type !== 'state' || !restoredDraft.draft) throw new Error('Missing restored draft.')
+    if (!restoredDraft || restoredDraft.type !== 'state' || !restoredDraft.draft) {
+      throw new Error('Missing restored draft.')
+    }
     const restored = new Y.Doc()
     try {
       Y.applyUpdate(restored, Buffer.from(restoredDraft.draft, 'base64'))
-      expect(restored.getXmlFragment('default').toString()).toContain('The agreement remains intact.')
-    } finally { restored.destroy() }
+      expect(restored.getXmlFragment('default').toJSON()).toContain('The agreement remains intact.')
+    } finally {
+      restored.destroy()
+    }
     const restoredPdf = await request.get(signed.path + '/pdf')
     expect(restoredPdf.status()).toBe(200)
     expect((await restoredPdf.body()).equals(pdf)).toBe(true)

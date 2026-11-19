@@ -40,6 +40,30 @@ pnpm test:e2e
 
 The browser suite uses real workerd, Better Auth, SQLite, and Mailpit. Supply `CLAUSID_TEST_BROWSER` with a Chrome executable path to use an existing installation.
 
+## Development process
+
+Start with the [documentation index](docs/index.md), [agent instructions](AGENTS.md), and
+[development workflow](docs/development.md). The [contract surface](docs/contracts.md), feature references, [engineering plan](docs/clausid-engineering-plan.md),
+[tracker](docs/clausid-engineering-tracker.md) and [detailed prompt pack](docs/prompt.md) live alongside the implementation. The [enforcement map](docs/enforcement.md)
+distinguishes automated checks from review and hosted qualification.
+
+```sh
+pnpm check:local                # docs, policy, format, strict types/lint and unit tests
+pnpm format                     # format maintained application/tool/docs files
+pnpm check:changed              # affected checks; reports full profiles still required
+pnpm verify --plan              # inspect the shared application/CI plan without running it
+pnpm verify                    # application + website + real-service browser verification
+pnpm verify:pdf                # Rust/Wasm + workerd PDF round trip
+pnpm verify:ops                # offline operations CLI
+pnpm verify:all                # all integration profiles
+```
+
+Provision the existing toolchain, Mailpit and browser first. See [local resource ownership](docs/runbooks/local-development.md)
+for isolated data/ports and the remaining browser-concurrency limits. Git hooks install with
+`pnpm install` or `pnpm hooks:install`; inspect `pnpm hooks:status`. Codex/Claude completion
+configuration and the required Codex trust review are explained in [agent hooks](docs/agent-hooks.md).
+Verification never publishes or deploys remotely.
+
 ## Website
 
 The standalone Astro and Lumos homepage lives in `apps/website`. From the repository root, run `pnpm install --frozen-lockfile` and `pnpm --filter @clausid/website dev`. Open the URL printed by Astro. The website runs independently of the contract app and Mailpit.

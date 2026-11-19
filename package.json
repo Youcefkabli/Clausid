@@ -1,18 +1,28 @@
 {
+  "name": "clausid",
   "private": true,
   "type": "module",
-  "name": "clausid",
-  "packageManager": "pnpm@10.33.0",
-  "engines": {
-    "node": ">=24.11.1"
-  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "pnpm -r run build",
     "check": "tsc -b && vp lint",
+    "check:docs": "node scripts/checks/docs.mts",
+    "check:changed": "node scripts/checks/run.mts changed",
+    "hooks:install": "node scripts/agent/install.mts",
+    "hooks:status": "node scripts/agent/install.mts --status",
+    "hooks:smoke:claude": "node scripts/agent/smokeClaude.mts",
+    "postinstall": "node scripts/agent/install.mts --if-available",
+    "verify": "node scripts/checks/run.mts app",
+    "verify:pdf": "node scripts/checks/run.mts pdf",
+    "verify:ops": "node scripts/checks/run.mts ops",
+    "verify:all": "node scripts/checks/run.mts all",
     "test": "vp test run",
     "test:e2e": "playwright test",
-    "deploy": "node scripts/cloudflare-deploy.mjs"
+    "deploy": "node scripts/cloudflare-deploy.mjs",
+    "check:policy": "node scripts/checks/policy.mts",
+    "format:check": "node scripts/checks/format.mts check",
+    "format": "node scripts/checks/format.mts write",
+    "check:local": "node scripts/checks/run.mts local"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
@@ -21,8 +31,14 @@
     "typescript": "5.9.3",
     "vite-plus": "1.6.0",
     "wrangler": "4.162.0",
-    "yjs": "13.6.33"
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33",
+    "zod": "4.6.7"
   },
+  "engines": {
+    "node": ">=24.11.1"
+  },
+  "packageManager": "pnpm@10.33.0",
   "cloudflare": {
     "bindings": {
       "PUBLIC_ORIGIN": {

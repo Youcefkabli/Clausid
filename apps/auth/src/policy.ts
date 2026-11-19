@@ -11,6 +11,7 @@ type AuthConfig = {
 
 export function createAuth({ database, origin, secret, clientIpHeader, sendMail }: AuthConfig) {
   return betterAuth({
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- TypeScript 5.9 validates BetterAuthOptions database; the TS7 lint adapter loses this third-party union. Real auth and restore suites exercise both adapters.
     database,
     secret,
     baseURL: origin,
