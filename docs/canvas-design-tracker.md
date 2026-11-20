@@ -1,9 +1,27 @@
 # Canvas design tracker
 
-Status: CANVAS-001–008 and PDF highlight rendering correction locally verified on 2026-11-19
+Status: Implemented and pushed; full local verification passed on 2026-11-20
 Owner: Clausid maintainer and coding agent
 Issue: Not created; implementation authorized in chat
-Verified against: `600514c` and the current uncommitted implementation
+Verified against: implementation commit `bc54f3d0f34e17313eadaeef18e9d6c36a39ffc0`
+
+## Delivery — 2026-11-20
+
+The editor improvements, hover discussions, PDF highlight correction and supporting collaboration and
+presence implementation were committed as
+[`bc54f3d`](https://github.com/Youcefkabli/Clausid/commit/bc54f3d0f34e17313eadaeef18e9d6c36a39ffc0)
+and pushed to `origin/codex/engineering-adoption`.
+
+Active Git hooks verified the staged and committed snapshots. `pnpm check:changed` and the full
+pre-push `pnpm verify:all` passed: 84 unit tests, all 8 browser scenarios in Brave, 10 PDF engine
+tests and 2 operations tests, with builds, static/docs/policy/format checks, website diagnostics,
+Astryx doctor, deployment dry-run/auth parity and the workerd/Wasm PDF round trip. Logs are retained
+locally under `.data/editor-delivery/`. A desktop update interrupted the first run's Mailpit
+service; an isolated inbox restored the prerequisite, and the complete retry passed.
+
+Earlier sections preserve their original working-tree revisions and delivery state at verification
+time. This delivery entry supersedes their uncommitted status. Hosted staging, remote CI and release
+qualification remain separate from the passing local hooks. Temporary verification services are stopped.
 
 ## Starting point
 
