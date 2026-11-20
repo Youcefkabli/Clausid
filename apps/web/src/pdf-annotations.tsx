@@ -12,6 +12,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { api, errorMessage } from './api.ts'
 import type { ContractView, PdfAnnotationChange, PdfLocation, PdfTextBlock } from '@clausid/contracts'
+import { ReviewHeading, ReviewFilter, reviewStyles } from './app/canvas-editor/review-heading.tsx'
 
 export function PdfAnnotations({
   contract,
@@ -21,8 +22,14 @@ export function PdfAnnotations({
   busy,
   error,
   visit,
+  activeId,
+  names,
+  onPick,
 }: {
   contract: ContractView
+  names: ReadonlyMap<string, string>
+  activeId: string | undefined
+  onPick: (id: string) => void
   selection?: PdfSelection
   visit: (page: number, quote?: string, location?: PdfLocation) => void
   propose: boolean
@@ -41,6 +48,7 @@ export function PdfAnnotations({
   const [sourceLines, setSourceLines] = useState<{ page: string; blocks: PdfTextBlock[]; error?: string }>()
   const [replyTo, setReplyTo] = useState<string>()
   const [reply, setReply] = useState('')
+  const [filter, setFilter] = useState('All')
   const writable = contract.status === 'Draft' && contract.role !== 'signer'
   const pages = contract.sourcePdf?.pages ?? 0
   const validPage = Number.isInteger(Number(page)) && Number(page) >= 1 && Number(page) <= pages
@@ -199,18 +207,34 @@ export function PdfAnnotations({
         </form>
       )}
       <Heading level={3}>Negotiation history</Heading>
+      {!!contract.annotations?.filter((item) => !item.withdrawn && !!item.edit === propose).length && (
+        <ReviewFilter
+          value={filter}
+          onChange={setFilter}
+          open={contract.annotations.filter((item) => !item.withdrawn && !!item.edit === propose && !item.decision).length}
+          states={['Approved', 'Rejected']}
+        />
+      )}
       {!contract.annotations?.filter((item) => !item.withdrawn && !!item.edit === propose).length && <Text color="secondary">No annotations yet.</Text>}
       {contract.annotations
-        ?.filter((item) => !item.withdrawn && !!item.edit === propose)
+        ?.filter((item) => !item.withdrawn && !!item.edit === propose && (filter === 'All' || (item.decision?.status ?? 'Open') === filter))
         .map((annotation) => (
-          <VStack key={annotation.id} gap={2}>
+          <VStack
+            key={annotation.id}
+            gap={2}
+            id={'review-' + annotation.id}
+            tabIndex={-1}
+            xstyle={[reviewStyles.row, activeId === annotation.id && reviewStyles.active]}
+          >
             <Divider />
+            <ReviewHeading names={names} contract={contract} author={annotation.author} createdAt={annotation.createdAt} />
             <HStack gap={2} wrap="wrap" vAlign="center">
               <Button
                 label={`View page ${annotation.page}`}
                 size="sm"
                 variant="ghost"
-                onClick={() =>
+                onClick={() => {
+                  onPick(annotation.id)
                   visit(
                     annotation.page,
                     annotation.edit?.replacement && annotation.decision?.status === 'Approved'
@@ -218,13 +242,10 @@ export function PdfAnnotations({
                       : (annotation.quote ?? annotation.edit?.expected),
                     annotation.location,
                   )
-                }
+                }}
               />
               <Text type="supporting">{annotation.decision?.status ?? 'Open'}</Text>
             </HStack>
-            <Text type="supporting" color="secondary">
-              {annotation.author} · {new Date(annotation.createdAt).toLocaleString()}
-            </Text>
             {annotation.edit && (
               <VStack gap={0.5}>
                 <Text>Original: {annotation.edit.expected}</Text>
@@ -252,6 +273,7 @@ export function PdfAnnotations({
                 <HStack gap={2} wrap="wrap">
                   <Button
                     label="Reply"
+                    size="sm"
                     onClick={() => {
                       setReplyTo(annotation.id)
                       setReply('')
@@ -260,8 +282,18 @@ export function PdfAnnotations({
                   />
                   {contract.role === 'owner' && (
                     <>
-                      <Button label="Approve" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Approved' })} isDisabled={busy} />
-                      <Button label="Reject" onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Rejected' })} isDisabled={busy} />
+                      <Button
+                        label="Approve"
+                        size="sm"
+                        onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Approved' })}
+                        isDisabled={busy}
+                      />
+                      <Button
+                        label="Reject"
+                        size="sm"
+                        onClick={() => void save({ action: 'decide', id: annotation.id, decision: 'Rejected' })}
+                        isDisabled={busy}
+                      />
                     </>
                   )}
                 </HStack>

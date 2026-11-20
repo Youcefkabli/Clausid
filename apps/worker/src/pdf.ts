@@ -1,6 +1,7 @@
 import { requiredValue } from '../../../packages/contracts/src/invariant.ts'
 import type { PdfAnnotation } from '@clausid/contracts'
-import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib'
+import { PDFDocument, PDFHexString, rgb, LineCapStyle } from 'pdf-lib'
+import { nativeColorSchema, nativeLinkSchema } from '@clausid/contracts'
 import fontkit from '@pdf-lib/fontkit'
 import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { Doc } from 'yjs'
@@ -47,6 +48,10 @@ export async function renderPdf(title: string, draft: Doc) {
         continue
       }
       const marks = new Set(node.marks?.map((mark) => mark.type))
+      const href = marks.has('link') ? nativeLinkSchema.parse(node.marks?.find((mark) => mark.type === 'link')?.attrs?.['href']) : undefined
+      const colorValue = node.marks?.find((mark) => mark.type === 'textStyle')?.attrs?.['color']
+      const color = colorValue == null ? (href ? '#1d4ed8' : undefined) : nativeColorSchema.parse(colorValue)
+      const textInk = color ? rgb(parseInt(color.slice(1, 3), 16) / 255, parseInt(color.slice(3, 5), 16) / 255, parseInt(color.slice(5, 7), 16) / 255) : ink
       const index = Number(strong || marks.has('bold')) + (marks.has('italic') ? 2 : 0)
       const font = requiredValue(fonts[index])
       const draw = (part: string) => {
@@ -54,15 +59,27 @@ export async function renderPdf(title: string, draft: Doc) {
         if (x + width > 550) {
           line()
         }
-        page.drawText(part, { x, y, size, font, color: ink })
+        page.drawText(part, { x, y, size, font, color: textInk })
+        if (href && width > 0) {
+          const annotation = pdf.context.register(
+            pdf.context.obj({
+              Type: 'Annot',
+              Subtype: 'Link',
+              Rect: [x, y - size * 0.25, x + width, y + size],
+              Border: [0, 0, 0],
+              A: { Type: 'Action', S: 'URI', URI: PDFHexString.fromText(href) },
+            }),
+          )
+          page.node.addAnnot(annotation)
+        }
         const markLine = (offset: number) =>
           page.drawLine({
             start: { x, y: y + offset },
             end: { x: x + width, y: y + offset },
             thickness: 0.7,
-            color: ink,
+            color: textInk,
           })
-        if (marks.has('underline')) {
+        if (marks.has('underline') || href) {
           markLine(-2)
         }
         if (marks.has('strike')) {

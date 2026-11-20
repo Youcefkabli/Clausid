@@ -1,21 +1,11 @@
-import { getSchema } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
-import { initProseMirrorDoc, relativePositionToAbsolutePosition, updateYFragment, yDocToProsemirrorJSON } from '@tiptap/y-tiptap'
+import { initProseMirrorDoc, relativePositionToAbsolutePosition, updateYFragment } from '@tiptap/y-tiptap'
 import type { Doc } from 'yjs'
 
 import * as Y from 'yjs'
 import type { NativeAnchor } from '@clausid/contracts'
+import { draftSchema as schema, validateDraft } from './native-schema.ts'
+export { validateDraft } from './native-schema.ts'
 import { decode, HttpError } from './http.ts'
-
-const schema = getSchema([StarterKit.configure({ link: false, undoRedo: false, trailingNode: false })])
-
-export function validateDraft(draft: Doc) {
-  const document = yDocToProsemirrorJSON(draft, 'default')
-  if (!document.content?.length) {
-    return
-  }
-  schema.nodeFromJSON(document).check()
-}
 
 export function reviewPassage(draft: Doc, anchor: NativeAnchor, replacement?: string) {
   const fragment = draft.getXmlFragment('default')
@@ -34,10 +24,25 @@ export function reviewPassage(draft: Doc, anchor: NativeAnchor, replacement?: st
   if (replacement === undefined) {
     return
   }
-  if (!doc.resolve(from).sameParent(doc.resolve(to))) {
+  // Select All around one text block includes its outer boundaries. Normalize
+  // those positions to the inline content before inserting replacement text.
+  const block = doc.nodeAt(from)
+  if (doc.resolve(from).depth === 0 && block?.isTextblock && from + block.nodeSize === to) {
+    from += 1
+    to -= 1
+  }
+  if (!doc.resolve(from).sameParent(doc.resolve(to)) || !doc.resolve(from).parent.isTextblock) {
     throw new HttpError(422, 'Select text in one paragraph for a replacement.')
   }
-  const content = replacement ? schema.text(replacement, doc.resolve(from).marksAcross(doc.resolve(to)) ?? []) : undefined
+  // Preserve marks shared by the replaced text, including non-inclusive links
+  // at a paragraph end. marksAcross intentionally drops those at that boundary.
+  let inherited: typeof doc.marks | undefined
+  doc.nodesBetween(from, to, (node) => {
+    if (node.isText) {
+      inherited = inherited === undefined ? node.marks : inherited.filter((mark) => mark.isInSet(node.marks))
+    }
+  })
+  const content = replacement ? schema.text(replacement, inherited ?? []) : undefined
   const slice = schema.node('doc', null, schema.node('paragraph', null, content)).slice(1, 1 + replacement.length)
   updateYFragment(draft, fragment, doc.replace(from, to, slice), meta)
   validateDraft(draft)

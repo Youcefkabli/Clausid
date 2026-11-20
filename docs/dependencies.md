@@ -142,6 +142,13 @@ Third-party runtime code, generated Wasm and native binaries have distinct owner
 **Cost:** Schema/version coupling and editor lifecycle; use compatibility and reconnect/review tests.
 **Consumers:** [apps/web/package.json](../apps/web/package.json).
 
+### `npm:@tiptap/extension-text-style`
+
+**Does:** Supplies the TextStyle and Color marks used by the native browser editor and Worker schema.
+**Why not the platform:** contenteditable does not provide schema-compatible collaborative formatting.
+**Cost:** One pinned Tiptap extension package, using the existing 3.34.0 core and ProseMirror peers.
+**Consumers:** Web native selection controls, Worker draft validation and native PDF export.
+
 ### `npm:@tiptap/react`
 
 **Does:** Integrates the editor lifecycle with React.

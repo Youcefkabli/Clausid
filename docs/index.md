@@ -13,6 +13,9 @@
 
 ## Engineering references
 
+The current Canvas refactor has a [design plan](canvas-design-plan.md),
+[assignment pack](canvas-design-prompts.md) and [verification tracker](canvas-design-tracker.md).
+
 The [codebase](codebase.md) explains the application constraint and the complete request/write
 paths. The [contract surface](contracts.md) owns public shapes, representation compatibility and
 state transitions. Feature references explain the ordering, ownership and failure mechanisms:

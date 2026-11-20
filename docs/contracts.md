@@ -88,6 +88,17 @@ contract page, dashboard listings, current capability/permission rendering and p
 
 ## Native edit and review protocol
 
+Native drafts additionally support `link` marks with an absolute HTTP/HTTPS/mailto `href` and
+`textStyle` marks with an optional/null `color` from the fixed [Canvas palette](canvas-design-plan.md).
+The browser and Worker use the same palette and URL rules. Worker draft validation checks mark
+attributes on a disposable document before persistence and acknowledgement. Existing unmarked
+drafts retain their representation. These marks travel in existing Yjs updates, without a new
+HTTP endpoint. Private PDF parsing retains the attributes for color and URI-annotation export.
+
+The [Canvas assignments](canvas-design-prompts.md) and [tracker](canvas-design-tracker.md) own
+selection-toolbar, inline-comment and rendered qualification evidence. Comment payloads continue
+to use the native anchor or PDF quote/location/displayed-digest contracts below.
+
 `clientMessage` is an edit or presence discriminated union. An edit carries UUID id and base64
 update (≤350,000 characters). Presence carries uint32 clientId/clock and nullable JSON cursor.
 The actor additionally bounds the envelope (360,000 characters), cursor JSON (1,200 characters)
@@ -131,6 +142,8 @@ it may carry quote/location/displayedDigest/requestId. Markup has a tool and 2�
 points. A replacement identifies block, expected nonempty text and replacement (both ≤800).
 The persisted edit adds zero-based page and Unicode scalar offset; the actor computes the offset
 from exact source text, not a browser's UTF-16 selection index.
+The optional display `location` instead records PDF baseline x/y and a UTF-16 text-layer offset
+for locating the visible quote. It is a presentation witness, not a persisted rewrite offset.
 
 There are 60 annotations and 120 total PDF replies. Source range overlap with an approved edit
 is 409; stale displayed digest is 409; ambiguous/unsupported target is 422. Failed approval does
@@ -180,3 +193,25 @@ are complemented by [HTTP/projection fixtures](../tests/boundaries.test.ts),
 [WebSocket recovery](../tests/connection.test.ts) and [private-record compatibility](../tests/records.test.ts).
 The tracker records the exact local tree and completed integration results. A source link or a document checker pass does not prove
 semantic correctness. New wire fields must update producer, consumer, fixture and this reference.
+
+## Participant presence
+
+`partySchema` accepts an optional display `name` (up to 80 characters). Legacy parties without it
+remain valid. `state.self` is an optional canonical `{id,email,name,color}` identity. Account colors
+are deterministic, six-digit lowercase hex; names are supplied from verified sessions, never client
+presence claims. `workspaceAccessSchema.canViewParticipants` reports current roster availability.
+
+`GET /api/workspaces/:id/socket` uses verified authentication, exact-origin enforcement and current
+workspace membership. Client activity is `{type:'activity',status,contractId}`: status is Online,
+Editing or Away and contractId is a UUID or null. Its JSON envelope is limited to 1,024 characters.
+The server verifies document ownership/workspace linkage and current sender access; read-only/PDF
+activity cannot advertise native editing. Server messages are participants snapshots or an error.
+Each participant carries canonical identity, Online/Editing/Away/Offline, a working flag, and
+`documents: [{id,title}]` filtered by that recipient's current Contract access. No unauthorized
+private document identifier is sent. Multiple tab sessions share one account row.
+
+Native presence cursor is null or `{anchor,head}` with validated Yjs relative-position structures.
+Legacy server users can omit account ID. Existing null cursors, optional relative-position fields,
+client IDs/clocks and 1,200-character cursor bound remain supported. Invalid presence cannot mutate
+live document bytes or clear pending edit receipts. Old socket attachment cursors that do not match
+the supported structure are sent as null rather than published to Tiptap.

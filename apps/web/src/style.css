@@ -1,55 +1,3 @@
-.page-content {
-  max-width: 1200px;
-  margin-inline: auto;
-  padding: clamp(16px, 4vw, 40px);
-}
-
-.auth-panel {
-  max-width: 440px;
-  margin-inline: auto;
-}
-
-.flow,
-form {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
-
-form {
-  justify-items: start;
-}
-
-.actions,
-.contract-top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.template-form {
-  justify-items: stretch;
-}
-
-.contract-top .actions {
-  margin-inline-start: auto;
-}
-
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-  gap: 16px;
-  align-items: start;
-}
-
-.people li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .tiptap {
   min-height: 50vh;
   overflow-wrap: anywhere;
@@ -69,6 +17,9 @@ form {
   color: white;
   padding-inline: 4px;
   white-space: nowrap;
+  max-inline-size: min(32ch, calc(100vw - var(--spacing-8)));
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 iframe {
@@ -80,28 +31,8 @@ iframe {
   height: 44vh;
 }
 
-@media (max-width: 780px) {
-  .workspace-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.contract-editor {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-.contract-editor-viewport {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-}
-
 .canvas-contract-text {
-  padding: clamp(var(--spacing-4), 5vw, var(--spacing-10));
+  padding: 0 calc(var(--spacing-6) * 2) calc(var(--spacing-6) * 2);
 }
 
 .canvas-contract-text .tiptap,
@@ -137,6 +68,50 @@ iframe {
   transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1)) scale(calc(1 / var(--min-font-size)));
 }
 .pdf-text-layer ::selection {
-  background: Highlight;
-  color: HighlightText;
+  /* The canvas owns the glyphs; selected overlay text must not paint a second font. */
+  background: color-mix(in srgb, Highlight 40%, transparent);
+  color: transparent;
+}
+
+@media (max-width: 640px) {
+  .canvas-contract-text {
+    padding-inline: var(--spacing-6);
+    padding-block-end: var(--spacing-6);
+  }
+}
+/* Authored links use the same default ink as PDF export. Explicit Color marks override it. */
+.canvas-contract-text .tiptap a {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+.canvas-contract-text .tiptap p {
+  margin-block: 0 var(--spacing-4);
+}
+.canvas-contract-text .tiptap :where(h1, h2, h3) {
+  margin-block: var(--spacing-6) var(--spacing-3);
+}
+
+/* PDF selection text is transparent over the page image; keep its glyphs visible below decorations. */
+::highlight(clausid-passage) {
+  background-color: color-mix(in srgb, var(--color-warning-muted, Highlight) 40%, transparent);
+  color: inherit;
+}
+
+::highlight(clausid-review-anchors) {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-icon-secondary);
+}
+
+::highlight(clausid-hover-passage) {
+  background-color: color-mix(in srgb, var(--color-warning-muted, Highlight) 40%, transparent);
+  color: inherit;
+}
+
+/* Tiptap's editable DOM keeps a quiet keyboard focus indicator beside the text. */
+.canvas-contract-text .tiptap:focus {
+  outline: none;
+}
+.canvas-contract-text .tiptap:focus-visible {
+  box-shadow: inset 2px 0 0 var(--color-icon-primary);
 }

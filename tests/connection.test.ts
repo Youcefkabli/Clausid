@@ -166,3 +166,18 @@ it('ignores late frames from the replaced socket and detaches local listeners on
   room.doc.getText('default').insert(0, 'after disposal')
   expect(socket(1).sent).toHaveLength(sent)
 })
+
+// Presence is visible for signers, but local Yjs mutations cannot enter the edit queue.
+it('keeps signer connections read-only while applying canonical local identity', () => {
+  const room = setup()
+  const self = { id: 'signer-account', name: 'Verified Signer', email: 'signer@example.com', color: '#345678' }
+  socket().message({ type: 'state', contract: { ...contractFixture(), role: 'signer' }, self })
+  expect(room.awareness.getLocalState()?.['user']).toEqual(self)
+  room.doc.getText('default').insert(0, 'Must not send')
+  expect(
+    socket()
+      .sent.map((raw) => clientMessage.parse(JSON.parse(raw)))
+      .some((message) => message.type === 'edit'),
+  ).toBe(false)
+  expect(room.state().pending).toBe(0)
+})

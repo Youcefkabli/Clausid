@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
+import { List, ListItem } from '@astryxdesign/core/List'
+import { VStack, HStack } from '@astryxdesign/core/Stack'
 import { Layout, LayoutContent } from '@astryxdesign/core/Layout'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Heading, Text } from '@astryxdesign/core/Text'
@@ -59,53 +61,52 @@ export function WorkspacePartiesDialog({ workspace }: { workspace: Workspace }) 
           setOpen(true)
         }}
       />
-      <Dialog isOpen={open} onOpenChange={setOpen} purpose="form" padding={0}>
+      <Dialog isOpen={open} onOpenChange={setOpen} purpose="form">
         <Layout
+          padding={4}
+          defaultHasDividers
           header={<DialogHeader title="Workspace parties" onOpenChange={setOpen} />}
           content={
             <LayoutContent>
-              <div className="flow">
+              <VStack gap={4}>
                 {roster?.role === 'owner' && (
                   <form
-                    className="template-form"
                     onSubmit={(event) => {
                       event.preventDefault()
                       void invite()
                     }}
                   >
-                    <TextInput label="Party email" type="email" isRequired {...{ required: true }} value={email} onChange={setEmail} width="100%" />
-                    <div>
-                      <Button label="Invite party" type="submit" variant="primary" isLoading={busy} />
-                    </div>
+                    <VStack gap={3} width="100%">
+                      <TextInput label="Party email" type="email" isRequired {...{ required: true }} value={email} onChange={setEmail} width="100%" />
+                      <HStack>
+                        <Button label="Invite party" type="submit" variant="primary" isLoading={busy} />
+                      </HStack>
+                    </VStack>
                   </form>
                 )}
-                {error && (
-                  <div role="alert">
-                    <Banner status="error" title={error} />
-                  </div>
-                )}
+                {error && <Banner status="error" title={error} role="alert" />}
                 {notice && <Text role="status">{notice}</Text>}
                 {roster && (
                   <>
                     <Heading level={3}>Parties</Heading>
-                    <ul>
+                    <List edge="flush" aria-label="Workspace parties">
                       {roster.parties.map((party) => (
-                        <li key={party.id}>{party.email}</li>
+                        <ListItem key={party.id} label={party.name?.trim() || party.email} description={party.name?.trim() ? party.email : undefined} />
                       ))}
-                    </ul>
+                    </List>
                     {!!roster.invitations.length && (
                       <>
                         <Heading level={3}>Pending invitations</Heading>
-                        <ul>
+                        <List edge="flush" aria-label="Pending invitations">
                           {roster.invitations.map((address) => (
-                            <li key={address}>{address}</li>
+                            <ListItem key={address} label={address} />
                           ))}
-                        </ul>
+                        </List>
                       </>
                     )}
                   </>
                 )}
-              </div>
+              </VStack>
             </LayoutContent>
           }
         />

@@ -2,7 +2,7 @@ import { requiredValue } from '../../../../../packages/contracts/src/invariant.t
 import * as stylex from '@stylexjs/stylex'
 import { useEffect, useRef } from 'react'
 import type { PointerEvent } from 'react'
-import type { PdfAnnotation, PdfMarkup } from '@clausid/contracts'
+import type { PdfAnnotation, PdfLocation, PdfMarkup } from '@clausid/contracts'
 
 export type MarkupTool = PdfMarkup['tool'] | 'select'
 export type MarkupControls = {
@@ -11,7 +11,7 @@ export type MarkupControls = {
   annotations: PdfAnnotation[]
   writable: boolean
   busy: boolean
-  add: (page: number, markup: PdfMarkup) => Promise<unknown>
+  add: (page: number, markup: PdfMarkup, context?: { quote: string; location: PdfLocation; displayedDigest: string; requestId: string }) => Promise<unknown>
   undo?: (() => Promise<void>) | undefined
   redo?: (() => Promise<void>) | undefined
 }

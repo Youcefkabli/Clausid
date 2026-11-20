@@ -1,5 +1,36 @@
 import { z } from 'zod'
 
+// Content colors are fixed PDF ink values, independent of the surrounding UI theme.
+export const nativeTextColors = [
+  { name: 'Gray', value: '#5f6368' },
+  { name: 'Red', value: '#b91c1c' },
+  { name: 'Amber', value: '#92400e' },
+  { name: 'Green', value: '#166534' },
+  { name: 'Blue', value: '#1d4ed8' },
+  { name: 'Purple', value: '#6d28d9' },
+] as const
+export const nativeColorSchema = z.enum(['#5f6368', '#b91c1c', '#92400e', '#166534', '#1d4ed8', '#6d28d9'])
+export const nativeLinkSchema = z.string().refine((value) => {
+  try {
+    const url = new URL(value)
+    return (
+      ['https:', 'http:', 'mailto:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !Array.from(value).some((character) => character.charCodeAt(0) <= 32)
+    )
+  } catch {
+    return false
+  }
+}, 'Enter an absolute http, https or mailto link.')
+export const nativeLinkOptions = {
+  autolink: false,
+  linkOnPaste: false,
+  openOnClick: false,
+  HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
+  isAllowedUri: (url: string) => nativeLinkSchema.safeParse(url).success,
+}
+
 export type ResponseSchema<T> = Pick<z.ZodType<T>, 'safeParse'>
 
 export const identifier = z.uuid()
@@ -78,13 +109,23 @@ export const signContract = z.object({
   consentVersion: z.literal(consentVersion),
 })
 const encoded = z.base64().max(350_000)
+const relativeIdSchema = z.object({ client: z.number().int().nonnegative().max(0xffffffff), clock: z.number().int().nonnegative() })
+export const relativePositionSchema = z
+  .object({
+    type: relativeIdSchema.nullable().optional(),
+    tname: z.string().nullable().optional(),
+    item: relativeIdSchema.nullable().optional(),
+    assoc: z.number().int().optional(),
+  })
+  .refine((position) => Boolean(position.type || position.tname || position.item), 'Invalid relative position.')
+export const cursorSchema = z.object({ anchor: relativePositionSchema, head: relativePositionSchema }).nullable()
 export const clientMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('edit'), id: identifier, update: encoded }),
   z.object({
     type: z.literal('presence'),
     clientId: z.number().int().nonnegative().max(0xffffffff),
     clock: z.number().int().nonnegative().max(0xffffffff),
-    cursor: z.json().nullable(),
+    cursor: cursorSchema,
   }),
 ])
 
@@ -171,7 +212,33 @@ const outputEmail = z.email().max(254)
 const timestamp = z.string().min(1)
 const integer = z.number().int().nonnegative()
 export const digestSchema = z.string().regex(/^[a-f0-9]{64}$/)
-export const partySchema = z.object({ id: outputId, email: outputEmail })
+export const partySchema = z.object({ id: outputId, email: outputEmail, name: z.string().max(80).optional() })
+export const presenceUserSchema = z.object({ id: outputId, email: outputEmail, name: z.string().min(1).max(254), color: z.string().regex(/^#[a-f0-9]{6}$/) })
+export type PresenceUser = z.infer<typeof presenceUserSchema>
+// Account identity, rather than a Yjs session ID, keeps colors stable in every tab and workspace.
+// Dark channels keep white cursor labels readable; labels also identify people with similar colors.
+export function presenceColor(accountId: string): string {
+  let hash = 2166136261
+  for (const character of accountId) {
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619)
+  }
+  return '#' + [0, 8, 16].map((shift) => (40 + ((hash >>> shift) % 73)).toString(16).padStart(2, '0')).join('')
+}
+export const participantSchema = presenceUserSchema.extend({
+  status: z.union([z.literal('Online'), z.literal('Editing'), z.literal('Away'), z.literal('Offline')]),
+  working: z.boolean(),
+  documents: z.array(z.object({ id: outputId, title: z.string() })),
+})
+export type Participant = z.infer<typeof participantSchema>
+export const workspaceActivitySchema = z.object({
+  type: z.literal('activity'),
+  status: z.union([z.literal('Online'), z.literal('Editing'), z.literal('Away')]),
+  contractId: identifier.nullable(),
+})
+export const workspacePresenceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('participants'), participants: z.array(participantSchema) }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+])
 export const statusSchema = z.enum(['Draft', 'Awaiting signatures', 'Signed', 'Voided'])
 export const roleSchema = z.enum(['owner', 'editor', 'signer'])
 export const workspaceSchema = z.object({
@@ -278,19 +345,19 @@ export const contractViewSchema = summarySchema.extend({
     .nullable(),
 })
 export const serverMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('state'), contract: contractViewSchema, draft: z.base64().optional() }),
+  z.object({ type: z.literal('state'), contract: contractViewSchema, draft: z.base64().optional(), self: presenceUserSchema.optional() }),
   z.object({ type: z.literal('edit'), id: outputId, revision: integer, update: z.base64() }),
   z.object({ type: z.literal('ack'), id: outputId, revision: integer }),
   z.object({
     type: z.literal('presence'),
     clientId: z.number().int().nonnegative().max(0xffffffff),
     clock: z.number().int().nonnegative().max(0xffffffff),
-    state: z.record(z.string(), z.unknown()).nullable(),
+    state: z.object({ user: presenceUserSchema.extend({ id: outputId.optional() }), cursor: cursorSchema.optional() }).nullable(),
   }),
   z.object({ type: z.literal('error'), message: z.string() }),
 ])
 export const previewSchema = z.object({ id: outputId, digest: digestSchema })
-export const workspaceAccessSchema = z.object({ workspaceId: outputId.optional(), canManage: z.boolean() })
+export const workspaceAccessSchema = z.object({ workspaceId: outputId.optional(), canManage: z.boolean(), canViewParticipants: z.boolean().optional() })
 export const invitationAckSchema = z.object({ email: outputEmail })
 export const emptySchema = z.undefined()
 export const errorResponseSchema = z.object({ error: z.string().min(1).max(1000) })

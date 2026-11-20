@@ -1,6 +1,10 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 'use client'
+import { ParticipantRows, ParticipantsButton, PresenceFeedback } from '../../participants.tsx'
+import type { Presence } from '../../participants.tsx'
+import { presenceColor, presenceUserSchema } from '@clausid/contracts'
+import type { Participant, PresenceUser } from '@clausid/contracts'
 import { definedProps } from '../../defined-props.ts'
 
 import { requiredValue } from '../../../../../packages/contracts/src/invariant.ts'
@@ -12,6 +16,12 @@ import * as stylex from '@stylexjs/stylex'
 
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { TextStyle, Color } from '@tiptap/extension-text-style'
+import { nativeLinkOptions, nativeTextColors, contractViewSchema } from '@clausid/contracts'
+import { SelectionTools } from './selection-tools.tsx'
+import { ReviewHover } from './review-hover.tsx'
+import type { ReviewTarget } from './selection-tools.tsx'
+import type { PdfSelection, PdfTextMarkTool } from '../../pdf-selection.ts'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import type { Doc } from 'yjs'
@@ -51,13 +61,10 @@ import {
   MousePointer2,
   Brush,
   Highlighter,
-  Bold,
-  Italic,
   Underline,
   Strikethrough,
   Undo2,
   Redo2,
-  Type,
   MessageSquare,
   Replace,
   Signature,
@@ -75,7 +82,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { PdfAnnotations } from '../../pdf-annotations.tsx'
 import { NativeReview } from './native-review.tsx'
 import { DocumentNavigation } from './document-navigation.tsx'
-import { locateNative, nativePosition, nativeSelection, PdfNavigation, type PdfSelection, type Passage } from './navigation.ts'
+import { locateNative, nativePosition, nativeSelection, PdfNavigation, type Passage } from './navigation.ts'
 import type { ContractView, NativeAnchor } from '@clausid/contracts'
 
 const TAB_MAX_WIDTH = 164
@@ -94,10 +101,15 @@ const toolsRight = [
 ] as const
 const styles = stylex.create({
   canvasStage: { minWidth: '100%' },
-  artboardCentered: (zoom: number) => ({ margin: 'auto', zoom }),
+  paperInset: {
+    paddingInline: { default: 'calc(var(--spacing-6) * 2)', '@media (max-width: 640px)': 'var(--spacing-6)' },
+    paddingTop: { default: 'calc(var(--spacing-6) * 2)', '@media (max-width: 640px)': 'var(--spacing-6)' },
+  },
+  artboardCentered: (zoom: number) => ({ margin: 'auto', zoom, position: 'relative' }),
   headerTools: { overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none' },
   toolBarRule: { alignSelf: 'stretch', height: 'auto', marginBlock: 'var(--spacing-1)' },
   headerLead: { minWidth: 0 },
+  shellSurface: { backgroundColor: 'var(--color-background-surface)' },
   itemAction: {
     margin: 'calc(-1 * var(--spacing-1))',
     color: {
@@ -142,6 +154,7 @@ export type CanvasHeader = {
   start: React.ReactNode
   tools: React.ReactNode
   end: React.ReactNode
+  participants: React.ReactNode
   stackedTools: boolean
 }
 
@@ -247,6 +260,10 @@ type LiveDocument = {
   document: Doc
   awareness: Awareness
   name: string
+  accountId: string
+  presence: Presence
+  workspaceParticipants: boolean
+  connected: boolean
   editable: boolean
   syncStatus?: string
   frozen?: { pdf: React.ReactNode; exportActions: React.ReactNode }
@@ -266,6 +283,10 @@ export default function CanvasEditor({
   document,
   awareness,
   name,
+  accountId,
+  presence,
+  workspaceParticipants,
+  connected,
   editable,
   syncStatus,
   frozen,
@@ -281,66 +302,107 @@ export default function CanvasEditor({
   renderShell,
 }: LiveDocument) {
   const narrow = useMediaQuery('(max-width: 900px)')
+  const wide = useMediaQuery('(min-width: 1280px)')
+  const [formatRequest, setFormatRequest] = useState(0)
+  const [drawing, setDrawing] = useState(false)
   const compactHeader = useMediaQuery('(max-width: 640px)')
   const artboard = useRef<HTMLElement>(null)
   const contractEditor = useEditor(
     {
       extensions: [
-        StarterKit.configure({ link: false, undoRedo: false, trailingNode: false }),
+        StarterKit.configure({ link: nativeLinkOptions, undoRedo: false, trailingNode: false }),
+        TextStyle,
+        Color,
         Collaboration.configure({ document }),
-        CollaborationCaret.configure({ provider: { awareness }, user: { name, color: '#246a59' } }),
+        CollaborationCaret.configure({ provider: { awareness }, user: { id: accountId, name, email, color: presenceColor(accountId) } }),
       ],
       editorProps: { attributes: { 'aria-label': 'Contract document', role: 'textbox', 'aria-multiline': 'true' } },
       editable: editable,
     },
-    [document, awareness, name],
+    [document, awareness, name, accountId, email],
   )
   useEffect(() => {
     contractEditor?.setEditable(editable)
   }, [contractEditor, editable])
-  const marks = useEditorState({
-    editor: contractEditor,
-    selector: ({ editor }) => ({
-      bold: editor?.isActive('bold'),
-      italic: editor?.isActive('italic'),
-      underline: editor?.isActive('underline'),
-      strike: editor?.isActive('strike'),
-    }),
-  })
 
   const [zoom, setZoom] = useState('1')
   const scale = Number(zoom)
   const [chrome, setChrome] = useState({ toolbar: true })
   const [appearance, setAppearance] = useState<ThemeMode>('system')
-  const [left, setLeft] = useState<Left | null>(() => (narrow ? null : 'Sections'))
-  const [right, setRight] = useState<Right | null>(null)
+  const [left, setLeft] = useState<Left | null>(null)
+  const [right, setRight] = useState<Right | null>(() => (wide && contract.role !== 'signer' ? 'Comments' : null))
   useEffect(() => {
-    setLeft(narrow ? null : 'Sections')
-    setRight(null)
-  }, [narrow])
+    setLeft(null)
+    setRight(wide && contract.role !== 'signer' ? 'Comments' : null)
+  }, [narrow, wide, contract.role])
   const [pdfRows, setPdfRows] = useState<Passage[]>([])
+  const [pendingPdfVisit, setPendingPdfVisit] = useState<{
+    page: number
+    quote: string | undefined
+    location: import('@clausid/contracts').PdfLocation | undefined
+  }>()
   const [selectedPdf, setSelectedPdf] = useState<PdfSelection>()
   const [anchor, setAnchor] = useState<NativeAnchor>()
   const [current, setCurrent] = useState<Passage>()
   const [notice, setNotice] = useState('')
+  const [activeReview, setActiveReview] = useState<string>()
+  useEffect(() => {
+    if (activeReview && right) {
+      window.document.getElementById('review-' + activeReview)?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [activeReview, right, contract.revision])
   const lastPage = useRef(1)
   const rail = useResizable({ defaultSize: 232, minSize: 176, maxSize: 320 })
   const inspector = useResizable({ defaultSize: 320, minSize: 264, maxSize: 440 })
   const digest = contract.version?.digest ?? contract.negotiatedPdf?.digest ?? contract.sourcePdf?.digest ?? ''
-  const [online, setOnline] = useState<string[]>([])
+  useEffect(() => {
+    setPdfRows([])
+    setPendingPdfVisit(undefined)
+    setNotice('')
+    CSS.highlights?.delete('clausid-passage')
+  }, [digest])
+  const [online, setOnline] = useState<PresenceUser[]>([])
   useEffect(() => {
     const sync = () =>
       setOnline(
         [...awareness.getStates().values()].flatMap((state: unknown) => {
           const user: unknown = state && typeof state === 'object' ? Reflect.get(state, 'user') : undefined
-          const email: unknown = user && typeof user === 'object' ? Reflect.get(user, 'email') : undefined
-          return typeof email === 'string' ? [email] : []
+          const parsed = presenceUserSchema.safeParse(user)
+          return parsed.success ? [parsed.data] : []
         }),
       )
     sync()
     awareness.on('change', sync)
     return () => awareness.off('change', sync)
   }, [awareness])
+  const documentParticipants: Participant[] = (contract.team ?? []).map((person) => {
+    const active = online.find((user) => user.id === person.id)
+    const local = person.id === accountId
+    const present = Boolean(active && (!local || connected))
+    return {
+      id: person.id,
+      email: person.email,
+      name: active?.name ?? person.name ?? person.email,
+      color: active?.color ?? presenceColor(person.id),
+      status: present ? 'Online' : 'Offline',
+      working: present,
+      documents: [],
+    }
+  })
+  const reviewNames = new Map([
+    [email, name],
+    ...presence.participants.map((person) => [person.email, person.name] as const),
+    ...online.map((person) => [person.email, person.name] as const),
+  ])
+  const participantRoles = new Map(
+    (contract.team ?? []).map((person) => [
+      person.id,
+      person.id === contract.owner?.id ? 'Provider' : contract.editors.some((editor) => editor.id === person.id) ? 'Editor' : 'Signer',
+    ]),
+  )
+  const workspaceIds = new Set(presence.participants.map((person) => person.id))
+  const contractOnly = documentParticipants.filter((person) => !workspaceIds.has(person.id))
+  const headerPresence = workspaceParticipants ? presence : { ...presence, ready: connected, participants: documentParticipants }
   const content = useEditorState({ editor: contractEditor, selector: ({ editor }) => editor?.state.doc })
   const showingPdf = Boolean(frozen)
   const nativeRows = useMemo(() => {
@@ -433,13 +495,13 @@ export default function CanvasEditor({
     }
   }, [rows, showingPdf, contractEditor])
   function chooseLeft(next: Left | null) {
-    if (narrow && next) {
+    if (!wide && next) {
       setRight(null)
     }
     setLeft(next)
   }
   function chooseRight(next: Right | null) {
-    if (narrow && next) {
+    if (!wide && next) {
       setLeft(null)
     }
     setRight(next)
@@ -457,7 +519,7 @@ export default function CanvasEditor({
     setSelectedPdf(selection)
     const matching = rows.filter((row) => row.page === selection.page && row.item !== undefined && row.text.includes(selection.quote))
     setCurrent(matching.length === 1 ? matching[0] : rows.find((row) => row.key === 'page-' + selection.page))
-    chooseRight(selection.singleLine ? 'Suggestions' : 'Comments')
+    // Selection actions are explicit in the floating toolbar.
   }
   const loadPdf = useCallback((next: Passage[]) => {
     setPdfRows(next)
@@ -467,62 +529,92 @@ export default function CanvasEditor({
   }, [])
   const jumpObserver = useRef<MutationObserver | null>(null)
   useEffect(() => () => jumpObserver.current?.disconnect(), [])
-  function visit(row: Passage) {
-    if (narrow) {
-      setLeft(null)
-      setRight(null)
-    }
-    setCurrent(row)
-    if (row.position !== undefined && contractEditor) {
-      const from = row.position + (row.offset ?? 0)
-      contractEditor
-        .chain()
-        .focus()
-        .setTextSelection({ from, to: from + row.text.length })
-        .scrollIntoView()
-        .run()
-      return
-    }
-    if (!row.page) {
-      return
-    }
-    lastPage.current = row.page
-    const sheet = window.document.getElementById('contract-pdf-page-' + row.page)
-    sheet?.scrollIntoView({ block: 'start' })
-    jumpObserver.current?.disconnect()
-    if (!sheet || row.item === undefined) {
-      return
-    }
-    const highlight = () => {
-      const spans = [...sheet.querySelectorAll<HTMLElement>('[data-pdf-line="' + row.item + '"]')]
-      const start = row.offset ?? 0
-      const end = start + row.text.length
-      const first = spans.find((span) => Number(span['dataset']['offset']) + (span.textContent?.length ?? 0) > start)
-      const last = spans.find((span) => Number(span['dataset']['offset']) + (span.textContent?.length ?? 0) >= end)
-      if (!first?.firstChild || !last?.firstChild) {
-        return false
+  const visit = useCallback(
+    (row: Passage) => {
+      if (narrow) {
+        setLeft(null)
+        setRight(null)
       }
-      const range = window.document.createRange()
-      range.setStart(first.firstChild, start - Number(first['dataset']['offset']))
-      range.setEnd(last.firstChild, end - Number(last['dataset']['offset']))
-      if (range.toString() !== row.text) {
-        return false
+      setCurrent(row)
+      if (row.position !== undefined && contractEditor) {
+        const from = row.position + (row.offset ?? 0)
+        contractEditor
+          .chain()
+          .focus()
+          .setTextSelection({ from, to: from + row.text.length })
+          .scrollIntoView()
+          .run()
+        return
       }
-      window.getSelection()?.removeAllRanges()
-      window.getSelection()?.addRange(range)
-      first.scrollIntoView({ block: 'center' })
-      return true
-    }
-    if (!highlight()) {
-      const observer = new MutationObserver(() => {
-        if (highlight()) {
-          observer.disconnect()
+      if (!row.page) {
+        return
+      }
+      lastPage.current = row.page
+      const sheet = window.document.getElementById('contract-pdf-page-' + row.page)
+      sheet?.scrollIntoView({ block: 'start' })
+      jumpObserver.current?.disconnect()
+      if (!sheet || row.item === undefined) {
+        return
+      }
+      const highlight = () => {
+        const spans = [...sheet.querySelectorAll<HTMLElement>('[data-pdf-line="' + row.item + '"]')]
+        const start = row.offset ?? 0
+        const end = start + row.text.length
+        const first = spans.find((span) => Number(span['dataset']['offset']) + (span.textContent?.length ?? 0) > start)
+        const last = spans.find((span) => Number(span['dataset']['offset']) + (span.textContent?.length ?? 0) >= end)
+        if (!first?.firstChild || !last?.firstChild) {
+          return false
         }
-      })
-      jumpObserver.current = observer
-      observer.observe(sheet, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-pdf-item'] })
+        const range = window.document.createRange()
+        range.setStart(first.firstChild, start - Number(first['dataset']['offset']))
+        range.setEnd(last.firstChild, end - Number(last['dataset']['offset']))
+        if (range.toString() !== row.text) {
+          return false
+        }
+        window.getSelection()?.removeAllRanges()
+        window.getSelection()?.addRange(range)
+        if (typeof Highlight !== 'undefined') {
+          CSS.highlights.set('clausid-passage', new Highlight(range))
+        }
+        first.scrollIntoView({ block: 'center' })
+        return true
+      }
+      if (!highlight()) {
+        const observer = new MutationObserver(() => {
+          if (highlight()) {
+            observer.disconnect()
+          }
+        })
+        jumpObserver.current = observer
+        observer.observe(sheet, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-pdf-item'] })
+      }
+    },
+    [narrow, contractEditor],
+  )
+  useEffect(() => {
+    if (!pendingPdfVisit || !pdfRows.length) {
+      return
     }
-  }
+    const { page, quote, location } = pendingPdfVisit
+    const matches = quote
+      ? pdfRows.filter(
+          (row) =>
+            row.item !== undefined &&
+            row.page === page &&
+            row.text.includes(quote) &&
+            (location
+              ? row.x === location.x && row.y === location.y && row.text.startsWith(quote, location.offset)
+              : row.text.indexOf(quote) === row.text.lastIndexOf(quote)),
+        )
+      : []
+    setPendingPdfVisit(undefined)
+    if (matches.length === 1 && quote) {
+      const row = requiredValue(matches[0])
+      visit({ ...row, offset: location?.offset ?? row.text.indexOf(quote), text: quote })
+    } else if (quote) {
+      setNotice('This passage is no longer available.')
+    }
+  }, [pendingPdfVisit, pdfRows, visit])
   const saveReview = (change: import('@clausid/contracts').ReviewChange, requestId: string) => mutate('review', { change, requestId })
   const navigation = left && (
     <DocumentNavigation
@@ -542,15 +634,19 @@ export default function CanvasEditor({
   const review =
     right === 'People' ? (
       <VStack gap={2}>
-        {contract.team?.map((person) => (
-          <VStack key={person.id} gap={0.5}>
-            <Text weight="semibold">{person.email}</Text>
-            <Text type="supporting">
-              {person.id === contract.owner?.id ? 'Provider' : contract.editors.some((item) => item.id === person.id) ? 'Editor' : 'Signer'}
-              {online.includes(person.email) || (person.email === email && syncStatus === 'Saved') ? ' · Online' : ''}
-            </Text>
-          </VStack>
-        ))}
+        {workspaceParticipants && (
+          <>
+            <Text weight="semibold">Workspace members</Text>
+            <PresenceFeedback presence={presence} />
+            <ParticipantRows participants={presence.participants} roles={participantRoles} />
+          </>
+        )}
+        {(!workspaceParticipants || (presence.ready && contractOnly.length > 0)) && (
+          <>
+            {workspaceParticipants && <Text weight="semibold">Contract collaborators</Text>}
+            <ParticipantRows participants={workspaceParticipants ? contractOnly : documentParticipants} roles={participantRoles} />
+          </>
+        )}
         {onShare && <Button label="Share contract" onClick={onShare} />}
       </VStack>
     ) : (
@@ -562,31 +658,18 @@ export default function CanvasEditor({
             <PdfAnnotations
               key={right + JSON.stringify(selectedPdf)}
               contract={contract}
+              names={reviewNames}
+              activeId={activeReview}
+              onPick={setActiveReview}
               propose={right === 'Suggestions'}
               {...definedProps({ selection: selectedPdf })}
               save={(change) => mutate('annotation', change)}
               error={error}
               busy={busy}
               visit={(page, quote, location) => {
-                const matches = quote
-                  ? rows.filter(
-                      (row) =>
-                        row.item !== undefined &&
-                        row.page === page &&
-                        row.text.includes(quote) &&
-                        (location
-                          ? row.x === location.x && row.y === location.y && row.text.startsWith(quote, location.offset)
-                          : row.text.indexOf(quote) === row.text.lastIndexOf(quote)),
-                    )
-                  : []
-                if (quote && matches.length !== 1) {
-                  setNotice('Passage unavailable on the current page: ' + quote)
-                }
-                visit(
-                  matches.length === 1 && quote
-                    ? { ...requiredValue(matches[0]), offset: location?.offset ?? requiredValue(matches[0]).text.indexOf(quote), text: quote }
-                    : { key: 'page-' + page, page, text: '' },
-                )
+                setNotice('')
+                setPendingPdfVisit({ page, quote, location })
+                visit({ key: 'page-' + page, page, text: '' })
               }}
             />
           ) : (
@@ -595,6 +678,9 @@ export default function CanvasEditor({
               <NativeReview
                 key={right}
                 contract={contract}
+                names={reviewNames}
+                activeId={activeReview}
+                onPick={setActiveReview}
                 suggest={right === 'Suggestions'}
                 email={email}
                 save={saveReview}
@@ -603,6 +689,11 @@ export default function CanvasEditor({
                 visit={(location) => {
                   if (!contractEditor || !locateNative(contractEditor, location)) {
                     setNotice('This passage is no longer available.')
+                  } else {
+                    const selected = window.getSelection()
+                    if (selected?.rangeCount && typeof Highlight !== 'undefined') {
+                      CSS.highlights.set('clausid-passage', new Highlight(selected.getRangeAt(0).cloneRange()))
+                    }
                   }
                 }}
               />
@@ -612,6 +703,72 @@ export default function CanvasEditor({
       )
     )
 
+  async function postComment(target: ReviewTarget, text: string, requestId: string) {
+    const previous = new Set([...(contract.threads ?? []), ...(contract.annotations ?? [])].map((item) => item.id))
+    const selection = target.kind === 'pdf' ? target.selection : undefined
+    const result =
+      target.kind === 'native'
+        ? await saveReview({ action: 'add', anchor: target.anchor, text }, requestId)
+        : await mutate('annotation', {
+            action: 'add',
+            page: selection?.page,
+            quote: selection?.quote,
+            text,
+            requestId,
+            displayedDigest: selection?.digest,
+            ...(selection?.singleLine && selection.run && selection.offset !== undefined
+              ? { location: { x: selection.run.x, y: selection.run.y, offset: selection.offset } }
+              : {}),
+          })
+    const parsed = contractViewSchema.safeParse(result)
+    if (parsed.success) {
+      const row = [...(parsed.data.threads ?? []), ...(parsed.data.annotations ?? [])].find(
+        (item) => !previous.has(item.id) && item.author === email && item.text === text.trim(),
+      )
+      if (row) {
+        setActiveReview(row.id)
+      }
+    }
+    return result
+  }
+
+  async function markSelection(selection: PdfSelection, tool: PdfTextMarkTool, requestIds: readonly string[]) {
+    if (!markup?.writable || !selection.marks?.length) {
+      return false
+    }
+    for (const [index, mark] of selection.marks.entries()) {
+      const y = tool === 'underline' ? mark.rect.bottom : (mark.rect.top + mark.rect.bottom) / 2
+      const result = await markup.add(
+        selection.page,
+        {
+          tool,
+          points: [
+            { x: mark.rect.left, y },
+            { x: mark.rect.right, y },
+          ],
+        },
+        {
+          quote: mark.quote,
+          location: mark.location,
+          displayedDigest: selection.digest,
+          requestId: requiredValue(requestIds[index]),
+        },
+      )
+      if (!result) {
+        return false
+      }
+    }
+    return true
+  }
+
+  function suggest(target: ReviewTarget) {
+    if (target.kind === 'native') {
+      setAnchor(target.anchor)
+    } else {
+      setSelectedPdf(target.selection)
+    }
+    chooseRight('Suggestions')
+  }
   const header: CanvasHeader = {
     stackedTools: narrow,
     start: (
@@ -652,6 +809,20 @@ export default function CanvasEditor({
               <DropdownMenuItem label="Heading" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleHeading({ level: 2 }).run()} />
               <DropdownMenuItem label="Bulleted list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleBulletList().run()} />
               <DropdownMenuItem label="Numbered list" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleOrderedList().run()} />
+              <DropdownMenuItem label="Underline" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleUnderline().run()} />
+              <DropdownMenuItem label="Strikethrough" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().toggleStrike().run()} />
+              <DropdownMenuItem label="Link" isDisabled={!editable || Boolean(frozen)} onClick={() => setFormatRequest((value) => value + 1)} />
+              <DropdownMenuSubMenu label="Text color">
+                <DropdownMenuItem label="Default color" isDisabled={!editable} onClick={() => contractEditor?.chain().focus().unsetColor().run()} />
+                {nativeTextColors.map((color) => (
+                  <DropdownMenuItem
+                    key={color.value}
+                    label={color.name}
+                    isDisabled={!editable}
+                    onClick={() => contractEditor?.chain().focus().setColor(color.value).run()}
+                  />
+                ))}
+              </DropdownMenuSubMenu>
             </DropdownMenuSubMenu>
           </DropdownMenuSubMenu>
           <DropdownMenuSubMenu label="View">
@@ -739,7 +910,8 @@ export default function CanvasEditor({
                 {...definedProps({ onClick: markup ? markup.redo : () => contractEditor?.chain().focus().redo().run() })}
               />
               <Divider orientation="vertical" xstyle={styles.toolBarRule} />
-              {markup && (
+              {markup && <Button label="Annotate" size="sm" variant={drawing ? 'secondary' : 'ghost'} onClick={() => setDrawing(!drawing)} />}
+              {markup && drawing && (
                 <>
                   {(
                     [
@@ -762,54 +934,6 @@ export default function CanvasEditor({
                       onClick={() => markup.setTool(tool)}
                     />
                   ))}
-                </>
-              )}
-              {!frozen && (
-                <>
-                  <IconButton
-                    label="Add text"
-                    tooltip="Add text"
-                    variant="ghost"
-                    icon={<Icon icon={Type} size={ICON} />}
-                    isDisabled={!editable}
-                    onClick={() => contractEditor?.chain().focus().run()}
-                  />
-                  <IconButton
-                    label="Bold"
-                    tooltip="Bold"
-                    aria-pressed={Boolean(marks?.bold)}
-                    variant={marks?.bold ? 'secondary' : 'ghost'}
-                    icon={<Icon icon={Bold} size={ICON} />}
-                    isDisabled={!editable}
-                    onClick={() => contractEditor?.chain().focus().toggleBold().run()}
-                  />
-                  <IconButton
-                    label="Italic"
-                    tooltip="Italic"
-                    aria-pressed={Boolean(marks?.italic)}
-                    variant={marks?.italic ? 'secondary' : 'ghost'}
-                    icon={<Icon icon={Italic} size={ICON} />}
-                    isDisabled={!editable}
-                    onClick={() => contractEditor?.chain().focus().toggleItalic().run()}
-                  />
-                  <IconButton
-                    label="Underline"
-                    tooltip="Underline"
-                    aria-pressed={Boolean(marks?.underline)}
-                    variant={marks?.underline ? 'secondary' : 'ghost'}
-                    icon={<Icon icon={Underline} size={ICON} />}
-                    isDisabled={!editable}
-                    onClick={() => contractEditor?.chain().focus().toggleUnderline().run()}
-                  />
-                  <IconButton
-                    label="Strikethrough"
-                    tooltip="Strikethrough"
-                    aria-pressed={Boolean(marks?.strike)}
-                    variant={marks?.strike ? 'secondary' : 'ghost'}
-                    icon={<Icon icon={Strikethrough} size={ICON} />}
-                    isDisabled={!editable}
-                    onClick={() => contractEditor?.chain().focus().toggleStrike().run()}
-                  />
                 </>
               )}
               {onAnnotations && (
@@ -845,8 +969,9 @@ export default function CanvasEditor({
         />
       </HStack>
     ),
+    participants: <ParticipantsButton presence={headerPresence} compact={compactHeader} onClick={() => chooseRight('People')} />,
     end: (
-      <HStack gap={3} vAlign="center">
+      <HStack gap={1} vAlign="center">
         {syncStatus &&
           (compactHeader ? (
             <VisuallyHidden as="span" role="status">
@@ -925,14 +1050,22 @@ export default function CanvasEditor({
             padding={0}
             start={
               <>
-                <LayoutPanel width={44} label="Document navigation" padding={1} hasDivider>
+                <LayoutPanel width={44} label="Document navigation" padding={1} hasDivider xstyle={styles.shellSurface}>
                   <VStack gap={1}>
                     {toolsLeft.map(([label, icon]) => railButton(label, icon, left === label, () => chooseLeft(left === label ? null : label)))}
+                    {compactHeader && (
+                      <VStack gap={1} role="group" aria-label="Collaboration tools">
+                        <Divider />
+                        {toolsRight
+                          .filter(([label]) => canReview || label === 'People')
+                          .map(([label, icon]) => railButton(label, icon, right === label, () => chooseRight(right === label ? null : label)))}
+                      </VStack>
+                    )}
                   </VStack>
                 </LayoutPanel>
                 {left && !narrow && (
                   <>
-                    <LayoutPanel resizable={rail.props} label={left + ' panel'} padding={0} hasDivider>
+                    <LayoutPanel resizable={rail.props} label={left + ' panel'} padding={0} hasDivider xstyle={styles.shellSurface}>
                       <Layout
                         height="fill"
                         padding={0}
@@ -957,12 +1090,6 @@ export default function CanvasEditor({
                     padding={0}
                     content={
                       <LayoutContent padding={narrow ? 2 : 6} isScrollable>
-                        {anchor && !frozen && writable && (
-                          <HStack gap={1} paddingBlock={2}>
-                            <Button label="Comment on selection" size="sm" onClick={() => chooseRight('Comments')} />
-                            <Button label="Suggest replacement" size="sm" onClick={() => chooseRight('Suggestions')} />
-                          </HStack>
-                        )}
                         {frozen && compactHeader && (
                           <VStack gap={1} paddingBlock={2}>
                             <Text weight="semibold">{title}</Text>
@@ -986,6 +1113,15 @@ export default function CanvasEditor({
                                 frozen.pdf
                               ) : (
                                 <Card padding={0} elevation="med" minHeight={960}>
+                                  <VStack gap={2} xstyle={styles.paperInset} paddingBlockEnd={4}>
+                                    <Heading level={1}>{title}</Heading>
+                                    {contract.updatedAt && (
+                                      <Text type="supporting" color="secondary">
+                                        Updated {new Date(contract.updatedAt).toLocaleString()}
+                                      </Text>
+                                    )}
+                                    <Divider />
+                                  </VStack>
                                   <EditorContent className="canvas-contract-text" editor={contractEditor} />
                                 </Card>
                               )}
@@ -1003,11 +1139,28 @@ export default function CanvasEditor({
                 {right && !narrow && (
                   <>
                     <ResizeHandle label="Resize collaboration panel" resizable={inspector.props} isReversed />
-                    <LayoutPanel label={right + ' panel'} resizable={inspector.props} hasDivider padding={0}>
+                    <LayoutPanel label={right + ' panel'} resizable={inspector.props} hasDivider padding={0} xstyle={styles.shellSurface}>
                       <Layout
                         height="fill"
                         padding={0}
-                        header={panelTitle(right, () => chooseRight(null))}
+                        header={
+                          <VStack gap={0}>
+                            {panelTitle(right, () => chooseRight(null))}
+                            <HStack paddingInline={3} paddingBlock={2} gap={1}>
+                              {toolsRight
+                                .filter(([label]) => canReview || label === 'People')
+                                .map(([label]) => (
+                                  <Button
+                                    key={label}
+                                    label={label}
+                                    size="sm"
+                                    variant={right === label ? 'secondary' : 'ghost'}
+                                    onClick={() => chooseRight(label)}
+                                  />
+                                ))}
+                            </HStack>
+                          </VStack>
+                        }
                         content={
                           <LayoutContent padding={3} isScrollable>
                             {review}
@@ -1017,15 +1170,49 @@ export default function CanvasEditor({
                     </LayoutPanel>
                   </>
                 )}
-                <LayoutPanel width={44} label="Collaboration tools" padding={1} hasDivider>
-                  <VStack gap={1}>
-                    {toolsRight
-                      .filter(([label]) => canReview || label === 'People')
-                      .map(([label, icon]) => railButton(label, icon, right === label, () => chooseRight(right === label ? null : label)))}
-                  </VStack>
-                </LayoutPanel>
+                {!compactHeader && (!right || narrow) && (
+                  <LayoutPanel width={44} label="Collaboration tools" padding={1} hasDivider xstyle={styles.shellSurface}>
+                    <VStack gap={1}>
+                      {toolsRight
+                        .filter(([label]) => canReview || label === 'People')
+                        .map(([label, icon]) => railButton(label, icon, right === label, () => chooseRight(right === label ? null : label)))}
+                    </VStack>
+                  </LayoutPanel>
+                )}
               </>
             }
+          />
+          <SelectionTools
+            editor={frozen ? null : contractEditor}
+            artboard={artboard}
+            pdfSelection={selectedPdf}
+            writable={writable && (frozen ? Boolean(markup?.writable && markup.tool === 'select') : editable)}
+            busy={busy}
+            error={error}
+            onComment={postComment}
+            onAnnotate={markSelection}
+            annotationSlots={60 - (contract.annotations?.length ?? 0)}
+            onSuggest={suggest}
+            onPosted={() => chooseRight('Comments')}
+            linkRequest={formatRequest}
+            zoom={zoom}
+            pdfDigest={digest}
+          />
+          <ReviewHover
+            artboard={artboard}
+            editor={frozen ? null : contractEditor}
+            rows={rows}
+            contract={contract}
+            names={reviewNames}
+            zoom={zoom}
+            digest={digest}
+            enabled={canReview && (!markup || markup.tool === 'select')}
+            onOpen={(item) => {
+              const suggestion = item.kind === 'native' ? item.value.replacement !== undefined : Boolean(item.value.edit)
+              chooseRight(suggestion ? 'Suggestions' : 'Comments')
+              setActiveReview(item.value.id)
+              window.requestAnimationFrame(() => window.document.getElementById('review-' + item.value.id)?.focus())
+            }}
           />
           {narrow && (right || left) && (
             <Drawer

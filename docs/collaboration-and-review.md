@@ -48,6 +48,19 @@ shows an explicit Retry connection action. Retrying revalidates access and repla
 
 ## Review transaction and anchor semantics
 
+The [Canvas design workstream](canvas-design-plan.md) adds a selection toolbar and inline comment
+composer. A comment snapshots its passage before focus moves, retains text and request identity on
+failure, and publishes a thread only after the existing server mutation succeeds. Temporary passage
+highlights are browser presentation, distinct from authored color marks. Native formatting uses
+validated links and fixed text colors, with matching PDF output. Select All around one text block
+is normalized to its inline range for approval; replacements spanning blocks remain rejected.
+
+Document hover previews resolve the current native relative positions and quote without selecting
+or editing text. Dotted passage decoration and gutter controls are presentation-only. Hover/focus
+shows authorized author/time, content, replies and state; activating a marker opens the existing
+review panel. Hover is suppressed while selecting or drawing. Stale anchors remain in history and
+are not attached to different wording. Signer-only views do not expose the review overlay.
+
 Native review anchors contain base64 Yjs relative positions and the quoted text, not DOM offsets.
 `reviewPassage` resolves them against current text and rejects a stale quote (409), invalid location
 or a replacement spanning paragraphs (422). Approval operates on a disposable document first.
@@ -74,3 +87,21 @@ Owners: [connection](../apps/web/src/connection.ts), [review passage](../apps/wo
 [actor](../apps/worker/src/contract.ts), [public contracts](../packages/contracts/src/index.ts).
 Evidence: [workflow](../tests/workflow.spec.ts), [persistence](../tests/persistence.spec.ts), and
 boundary regression tests added by the engineering program. Shape checks do not prove authorization.
+
+## Workspace participants and named cursors
+
+The [workspace presence plan](workspace-presence-plan.md) and [verification record](workspace-presence-tracker.md)
+track live participant visibility. The workspace Directory owns a separate authenticated socket with
+schema-validated activity/snapshots. Its roster includes all accepted members and aggregates open
+tabs into Online, Editing, Away or Offline. Names come from verified account identity; account-based
+colors remain stable across tabs. Legacy membership names fall back to email until refreshed.
+
+Activity is transient, with 25-second heartbeats, 90-second leases and bounded session refresh.
+Editing lasts two seconds after local native changes; hidden/60-second-idle tabs are Away.
+Document IDs/titles are included only after current per-recipient Contract authorization; otherwise
+activity is described without exposing the document. Workspace membership does not grant contract access.
+Presence failure/retry is independent of draft saving and cannot acknowledge edits.
+
+Tiptap reuses the contract awareness channel for named native carets and colored selections.
+Presence is available to authorized read-only viewers; native edits still require a writable draft
+and an owner/editor role. PDFs expose participant activity without native-text cursors or mouse pointers.

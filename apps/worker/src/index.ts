@@ -23,6 +23,7 @@ import { deliverSetupInvitations, workspaceSharing } from './workspace-sharing.t
 import { securityHeaders, servesApplication, serveApplication } from './web.ts'
 import { authorizedOperation, snapshotObject } from './operations.ts'
 import { Contract } from './contract.ts'
+import { WorkspacePresence } from './workspace-presence.ts'
 import { serviceResponse, decode, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import type { Account, Env } from './http.ts'
 
@@ -35,8 +36,10 @@ const workspaceReady = 'NOT EXISTS (SELECT 1 FROM workspace_requests WHERE works
 
 export { Contract }
 export class Directory extends DurableObject<Env> {
+  readonly #presence: WorkspacePresence
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
+    this.#presence = new WorkspacePresence(ctx, env)
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS contracts (id TEXT PRIMARY KEY, created INTEGER NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_access (id TEXT PRIMARY KEY, workspace TEXT NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, created INTEGER NOT NULL)')
@@ -48,8 +51,18 @@ export class Directory extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_documents (id TEXT PRIMARY KEY, data BLOB NOT NULL)')
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace_contracts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)')
   }
-  override alarm() {
-    return deliverSetupInvitations(this.ctx, this.env)
+  override async alarm() {
+    await deliverSetupInvitations(this.ctx, this.env)
+    await this.#presence.alarm()
+  }
+  override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    return this.#presence.message(socket, message)
+  }
+  override webSocketClose(socket: WebSocket) {
+    return this.#presence.close(socket)
+  }
+  override webSocketError(socket: WebSocket) {
+    return this.#presence.close(socket)
   }
   override fetch(request: Request) {
     if (new URL(request.url).pathname.startsWith('/ops/')) {
@@ -58,6 +71,9 @@ export class Directory extends DurableObject<Env> {
     return safeResponse(async () => {
       const path = new URL(request.url).pathname
       const sql = this.ctx.storage.sql
+      if (path === '/sharing/socket') {
+        return this.#presence.connect(request)
+      }
       if (path.startsWith('/sharing/')) {
         return workspaceSharing(this.ctx, this.env, request)
       }
@@ -282,7 +298,10 @@ async function route(request: Request, env: Env) {
   const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(account.id))
   const sharing = (id: string, action: string, options?: RequestInit) => {
     const headers = new Headers(options?.headers)
-    headers.set('x-clausid-account', encodeURIComponent(JSON.stringify(account)))
+    headers.set(
+      'x-clausid-account',
+      encodeURIComponent(JSON.stringify(action === 'socket' ? { ...account, expires: Math.min(account.expires, Date.now() + 120_000) } : account)),
+    )
     return env.DIRECTORY.get(env.DIRECTORY.idFromName('workspace:' + id)).fetch('https://directory/sharing/' + action, { ...options, headers })
   }
   if (pathname === '/api/workspaces') {
@@ -381,10 +400,13 @@ async function route(request: Request, env: Env) {
     }
     return sharing(id, 'parties')
   }
-  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem|customize|delete|document|duplicate)$/)
+  const workspaceAction = pathname.match(/^\/api\/workspaces\/([^/]+)\/(parties|invite|redeem|customize|delete|document|duplicate|socket)$/)
   if (workspaceAction) {
     const id = identifier.parse(workspaceAction[1])
     const action = workspaceAction[2]
+    if (action === 'socket' && method === 'GET') {
+      return sharing(id, 'socket', { headers: { Upgrade: request.headers.get('Upgrade') ?? '' } })
+    }
     if (action === 'redeem' && method === 'POST') {
       return sharing(id, action, json(await readJson(request)))
     }
@@ -541,8 +563,9 @@ async function route(request: Request, env: Env) {
   }
   const id = identifier.parse(match[1])
   const action = match[2] ?? 'view'
-  async function contractWorkspace() {
-    const location = await directory.fetch('https://directory/workspace-contract/' + id)
+  async function contractWorkspace(ownerId = account.id) {
+    const ownerDirectory = env.DIRECTORY.get(env.DIRECTORY.idFromName(ownerId))
+    const location = await ownerDirectory.fetch('https://directory/workspace-contract/' + id)
     if (!location.ok) {
       throw new HttpError(503, 'Contract directory is temporarily unavailable.')
     }
@@ -554,10 +577,14 @@ async function route(request: Request, env: Env) {
       return contract
     }
     const view = await serviceResponse(contract, contractViewSchema)
-    const entry = await contractWorkspace()
+    const entry = await contractWorkspace(view.owner?.id)
     const canManage = view.role === 'owner' && (!entry || (await isServiceProvider(entry.workspaceId)))
     if (method === 'GET') {
-      return Response.json({ workspaceId: entry?.workspaceId, canManage })
+      const roster = entry ? await sharing(entry.workspaceId, 'parties') : null
+      if (roster && !roster.ok && roster.status !== 404) {
+        return roster
+      }
+      return Response.json({ workspaceId: entry?.workspaceId, canManage, canViewParticipants: roster?.ok ?? false })
     }
     if (!canManage) {
       throw providerRequired()

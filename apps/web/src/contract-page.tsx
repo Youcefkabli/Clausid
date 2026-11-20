@@ -1,3 +1,5 @@
+import * as stylex from '@stylexjs/stylex'
+import { List, ListItem } from '@astryxdesign/core/List'
 import { definedProps } from './defined-props.ts'
 import { contractViewSchema, previewSchema, workspaceAccessSchema } from '@clausid/contracts'
 import type { MarkupTool, MarkupControls } from './app/canvas-editor/pdf-markup.tsx'
@@ -25,10 +27,16 @@ import { Awareness } from 'y-protocols/awareness'
 import type { ContractView, Preview } from '@clausid/contracts'
 import { consentText, consentVersion, previewContract } from '@clausid/contracts'
 import { api, errorMessage } from './api.ts'
+import { useWorkspacePresence } from './participants.tsx'
 import { connectContract } from './connection.ts'
 import type { ConnectionState } from './connection.ts'
 import { clearProjection, project, useProjection } from './store.ts'
 import type { AppStore } from './store.ts'
+
+const styles = stylex.create({
+  editor: { overflow: 'hidden' },
+  viewport: { minHeight: 0, minWidth: 0 },
+})
 
 const FrozenPdf = lazy(() => import('./app/canvas-editor/frozen-pdf.tsx'))
 
@@ -39,7 +47,7 @@ export function ContractPage({
   renderPage,
 }: {
   id: string
-  account: { name: string; email: string }
+  account: { id: string; name: string; email: string }
   store: AppStore
   renderPage: (content: ReactNode, editorHeader?: CanvasHeader) => ReactNode
 }) {
@@ -55,7 +63,8 @@ export function ContractPage({
   const [error, setError] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
   const [share, setShare] = useState(false)
-  const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string | undefined; canManage: boolean }>()
+  const [sharingAccess, setSharingAccess] = useState<{ workspaceId?: string | undefined; canManage: boolean; canViewParticipants?: boolean | undefined }>()
+  const presence = useWorkspacePresence(sharingAccess?.canViewParticipants ? sharingAccess.workspaceId : undefined, id, room.document)
   const [prepare, setPrepare] = useState(false)
   const [signaturesOpen, setSignaturesOpen] = useState(false)
   const [voidOpen, setVoidOpen] = useState(false)
@@ -132,7 +141,7 @@ export function ContractPage({
   }, [id, room, store, publishView])
 
   useEffect(() => {
-    if (contract?.role !== 'owner') {
+    if (!contract) {
       return
     }
     const abort = new AbortController()
@@ -202,17 +211,9 @@ export function ContractPage({
   }
 
   const projectionError = row.kind === 'invalid' ? row.message : ''
-  const alerts = (
-    <>
-      {(error || projectionError) && (
-        <div role="alert">
-          <Banner status="error" title={error || projectionError} />
-        </div>
-      )}
-    </>
-  )
+  const alerts = <>{(error || projectionError) && <Banner status="error" title={error || projectionError} role="alert" />}</>
   if (!contract) {
-    return renderPage(!(error || projectionError) ? <p role="status">Opening contract…</p> : alerts)
+    return renderPage(!(error || projectionError) ? <Text role="status">Opening contract…</Text> : alerts)
   }
   const version = contract.version
   const draft = contract.status === 'Draft'
@@ -225,106 +226,151 @@ export function ContractPage({
     connection.ready &&
     !connection.error &&
     connection.pending === 0
-  const canEdit = draft && !contract.sourcePdf && !connection.error && !connection.ended
+  const canEdit = draft && contract.role !== 'signer' && !contract.sourcePdf && !connection.error && !connection.ended
   const recoverable = started && connection.pending > 0 && Boolean(connection.error)
   const openModal = (set: (open: boolean) => void) => {
     setError('')
     setNotice('')
     set(true)
   }
+  const changeShareOpen = (open: boolean) => {
+    setShare(open)
+    if (!open) {
+      setError('')
+    }
+  }
+  const changeSignaturesOpen = (open: boolean) => {
+    setSignaturesOpen(open)
+    if (!open) {
+      setError('')
+    }
+  }
+  const changeVoidOpen = (open: boolean) => {
+    setVoidOpen(open)
+    if (!open) {
+      setError('')
+    }
+  }
   const pageFeedback = (
     <>
       {!share && !prepare && !voidOpen && !signaturesOpen && alerts}
       {connection.error && (
-        <div role="alert">
-          <Banner status="error" title={connection.error} description={recoverable ? 'Copy your local changes before leaving this page.' : undefined} />
-        </div>
+        <Banner
+          status="error"
+          title={connection.error}
+          description={recoverable ? 'Copy your local changes before leaving this page.' : undefined}
+          role="alert"
+        />
       )}
       {connection.retryable && <Button label="Retry connection" onClick={() => retryConnection.current()} />}
     </>
   )
   const dialogs = (
     <>
-      <Dialog
-        isOpen={share && draft && !connection.ended}
-        onOpenChange={(open) => {
-          setShare(open)
-          if (!open) {
-            setError('')
-          }
-        }}
-        aria-label="Share contract"
-      >
-        <div className="flow">
-          <Heading level={2}>Share contract</Heading>
-          {sharingAccess?.workspaceId && (
-            <div className="flow">
-              <Text>Give the current workspace parties access to edit this draft.</Text>
-              <div>
-                <Button
-                  label="Share with workspace"
-                  isDisabled={busy}
-                  clickAction={async () => {
-                    if (await mutate('share-workspace')) {
-                      setNotice('Workspace parties can now edit this draft.')
+      <Dialog isOpen={share && draft && !connection.ended} onOpenChange={changeShareOpen} aria-label="Share contract" purpose="form">
+        <Layout
+          padding={4}
+          defaultHasDividers
+          header={<DialogHeader title="Share contract" onOpenChange={changeShareOpen} />}
+          content={
+            <LayoutContent>
+              <VStack gap={4}>
+                {sharingAccess?.workspaceId && (
+                  <VStack gap={3}>
+                    <Text>Give the current workspace parties access to edit this draft.</Text>
+                    <HStack>
+                      <Button
+                        label="Share with workspace"
+                        isDisabled={busy}
+                        clickAction={async () => {
+                          if (await mutate('share-workspace')) {
+                            setNotice('Workspace parties can now edit this draft.')
+                          }
+                        }}
+                      />
+                    </HStack>
+                  </VStack>
+                )}
+                <form
+                  onSubmit={async (event) => {
+                    event.preventDefault()
+                    const form = event.currentTarget
+                    if (await mutate('invite', { email: new FormData(form).get('email') })) {
+                      setInviteEmail('')
+                      setNotice('Invitation queued for delivery.')
                     }
                   }}
-                />
-              </div>
-            </div>
-          )}
-          <form
-            onSubmit={async (event) => {
-              event.preventDefault()
-              const form = event.currentTarget
-              if (await mutate('invite', { email: new FormData(form).get('email') })) {
-                setInviteEmail('')
-                setNotice('Invitation queued for delivery.')
-              }
-            }}
-          >
-            <TextInput
-              label="Collaborator email"
-              type="email"
-              htmlName="email"
-              isRequired
-              {...{ required: true }}
-              value={inviteEmail}
-              onChange={setInviteEmail}
-            />
-            <Button type="submit" label="Send invitation" variant="primary" isDisabled={busy} />
-          </form>
-          {alerts}
-          {notice && <p role="status">{notice}</p>}
-          <ul className="people">
-            {contract.editors.slice(1).map((person) => (
-              <li key={person.id}>
-                {person.email}
-                <Button
-                  label="Revoke access"
-                  clickAction={async () => {
-                    await mutate('revoke/' + person.id)
-                  }}
-                />
-              </li>
-            ))}
-            {contract.invites.map((invite) => (
-              <li key={invite.id}>
-                {invite.email}
-                <Button
-                  label="Cancel invite"
-                  clickAction={async () => {
-                    await mutate('revoke/' + invite.id)
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
-          <Button label="Done" onClick={() => setShare(false)} />
-        </div>
+                >
+                  <VStack gap={3}>
+                    <TextInput
+                      label="Collaborator email"
+                      type="email"
+                      htmlName="email"
+                      isRequired
+                      {...{ required: true }}
+                      value={inviteEmail}
+                      onChange={setInviteEmail}
+                      width="100%"
+                    />
+                    <HStack>
+                      <Button type="submit" label="Send invitation" variant="primary" isLoading={busy} />
+                    </HStack>
+                  </VStack>
+                </form>
+                {alerts}
+                {notice && <Text role="status">{notice}</Text>}
+                {!!(contract.editors.length > 1 || contract.invites.length) && (
+                  <List edge="flush" aria-label="Contract collaborators">
+                    {contract.editors.slice(1).map((person) => (
+                      <ListItem
+                        key={person.id}
+                        label={person.email}
+                        description="Editor"
+                        endContent={
+                          <Button
+                            label="Revoke access"
+                            size="sm"
+                            isDisabled={busy}
+                            clickAction={async () => {
+                              await mutate('revoke/' + person.id)
+                            }}
+                          />
+                        }
+                      />
+                    ))}
+                    {contract.invites.map((invite) => (
+                      <ListItem
+                        key={invite.id}
+                        label={invite.email}
+                        description="Invitation pending"
+                        endContent={
+                          <Button
+                            label="Cancel invite"
+                            size="sm"
+                            isDisabled={busy}
+                            clickAction={async () => {
+                              await mutate('revoke/' + invite.id)
+                            }}
+                          />
+                        }
+                      />
+                    ))}
+                  </List>
+                )}
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack hAlign="end">
+                <Button label="Done" onClick={() => changeShareOpen(false)} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
       {/* Astryx CLI 0.7.16, form-wizard-dialog template. */}
-      <Dialog isOpen={prepare && draft && !connection.ended} onOpenChange={changePrepareOpen} width={620} purpose="form" padding={0}>
+      <Dialog isOpen={prepare && draft && !connection.ended} onOpenChange={changePrepareOpen} width={620} purpose="form">
         <Layout
           height="fill"
           padding={4}
@@ -349,11 +395,11 @@ export function ContractPage({
                     {contract.sourcePdf && (
                       <Text>The PDF below is the exact version prepared for signature. Annotations and decisions remain in the negotiation history.</Text>
                     )}
-                    <ul>
+                    <List edge="flush" aria-label="Required signers">
                       {preview.signers.map((email) => (
-                        <li key={email}>{email}</li>
+                        <ListItem key={email} label={email} />
                       ))}
-                    </ul>
+                    </List>
                     <Link href={file + 'preview/' + preview.id} target="_blank" rel="noreferrer">
                       Open preview in a new tab
                     </Link>
@@ -366,7 +412,7 @@ export function ContractPage({
                     )}
                   </>
                 ) : (
-                  <form onSubmit={preparePdf} id={signerForm} className="template-form">
+                  <form onSubmit={preparePdf} id={signerForm}>
                     <TextArea
                       label="Signer email addresses"
                       htmlName="signers"
@@ -415,103 +461,117 @@ export function ContractPage({
           }
         />
       </Dialog>
-      <Dialog
-        isOpen={signaturesOpen && !draft && !connection.ended}
-        aria-label="Signatures"
-        onOpenChange={(open) => {
-          setSignaturesOpen(open)
-          if (!open) {
-            setError('')
-          }
-        }}
-      >
-        <VStack gap={4}>
-          <Heading level={2}>Signatures</Heading>
-          {version && (
-            <ul>
-              {version.signers.map((signer) => (
-                <li key={signer.email}>
-                  {signer.email}
-                  <small>{signer.signedAt ? 'Signed ' + new Date(signer.signedAt).toLocaleString() : 'Pending'}</small>
-                </li>
-              ))}
-            </ul>
-          )}
-          {version?.canSign && (
-            <form
-              onSubmit={async (event) => {
-                event.preventDefault()
-                const fields = new FormData(event.currentTarget)
-                if (
-                  await mutate('sign', {
-                    versionId: version.id,
-                    digest: version.digest,
-                    name: fields.get('name'),
-                    consent: fields.has('consent'),
-                    consentVersion,
-                  })
-                ) {
-                  setSignaturesOpen(false)
-                }
-              }}
-            >
-              <VStack gap={3}>
-                <TextInput
-                  label="Full name"
-                  htmlName="name"
-                  autoComplete="name"
-                  isRequired
-                  {...{ required: true, maxLength: 120 }}
-                  value={signingName}
-                  onChange={setSigningName}
-                />
-                <CheckboxInput label={consentText} htmlName="consent" value={consent} onChange={setConsent} isRequired />
-                <Button label="Sign contract" type="submit" variant="primary" isDisabled={busy} />
+      <Dialog isOpen={signaturesOpen && !draft && !connection.ended} aria-label="Signatures" onOpenChange={changeSignaturesOpen} purpose="form">
+        <Layout
+          padding={4}
+          defaultHasDividers
+          header={<DialogHeader title="Signatures" onOpenChange={changeSignaturesOpen} />}
+          content={
+            <LayoutContent>
+              <VStack gap={4}>
+                {version && (
+                  <List edge="flush" aria-label="Required signers">
+                    {version.signers.map((signer) => (
+                      <ListItem
+                        key={signer.email}
+                        label={signer.email}
+                        description={signer.signedAt ? 'Signed ' + new Date(signer.signedAt).toLocaleString() : 'Pending'}
+                      />
+                    ))}
+                  </List>
+                )}
+                {version?.canSign && (
+                  <form
+                    onSubmit={async (event) => {
+                      event.preventDefault()
+                      const fields = new FormData(event.currentTarget)
+                      if (
+                        await mutate('sign', {
+                          versionId: version.id,
+                          digest: version.digest,
+                          name: fields.get('name'),
+                          consent: fields.has('consent'),
+                          consentVersion,
+                        })
+                      ) {
+                        changeSignaturesOpen(false)
+                      }
+                    }}
+                  >
+                    <VStack gap={3}>
+                      <TextInput
+                        label="Full name"
+                        htmlName="name"
+                        autoComplete="name"
+                        isRequired
+                        {...{ required: true, maxLength: 120 }}
+                        value={signingName}
+                        onChange={setSigningName}
+                      />
+                      <CheckboxInput label={consentText} htmlName="consent" value={consent} onChange={setConsent} isRequired />
+                      <Button label="Sign contract" type="submit" variant="primary" isLoading={busy} />
+                    </VStack>
+                  </form>
+                )}
+                {alerts}
               </VStack>
-            </form>
-          )}
-          {alerts}
-          <Button
-            label="Done"
-            onClick={() => {
-              setSignaturesOpen(false)
-              setError('')
-            }}
-          />
-        </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack hAlign="end">
+                <Button label="Done" onClick={() => changeSignaturesOpen(false)} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
-      <Dialog isOpen={voidOpen} onOpenChange={setVoidOpen} aria-label="Void contract">
-        <div className="flow">
-          <Heading level={2}>Void contract</Heading>
-          <p>Pending signers will lose the ability to sign this version.</p>
-          {alerts}
-          <div className="actions">
-            <Button label="Cancel" onClick={() => setVoidOpen(false)} />
-            <Button
-              label="Confirm void"
-              variant="primary"
-              isDisabled={busy}
-              clickAction={async () => {
-                if (await mutate('void')) {
-                  setVoidOpen(false)
-                }
-              }}
-            />
-          </div>
-        </div>
+      <Dialog isOpen={voidOpen} onOpenChange={changeVoidOpen} aria-label="Void contract" purpose="form">
+        <Layout
+          padding={4}
+          defaultHasDividers
+          header={<DialogHeader title="Void contract" onOpenChange={changeVoidOpen} />}
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <Text>Pending signers will lose the ability to sign this version.</Text>
+                {alerts}
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                <Button label="Cancel" onClick={() => changeVoidOpen(false)} />
+                <Button
+                  label="Confirm void"
+                  variant="destructive"
+                  isDisabled={busy}
+                  clickAction={async () => {
+                    if (await mutate('void')) {
+                      changeVoidOpen(false)
+                    }
+                  }}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
     </>
   )
 
   const renderCanvas = (canvas: ReactNode, header: CanvasHeader) =>
     renderPage(
-      <div className="contract-editor">
-        <VisuallyHidden as="h1">{contract.title}</VisuallyHidden>
+      <VStack gap={0} width="100%" height="100%" xstyle={styles.editor} data-testid="contract-editor">
+        {(contract.sourcePdf || contract.version) && <VisuallyHidden as="h1">{contract.title}</VisuallyHidden>}
         {pageFeedback}
-        <div className="contract-editor-viewport">{canvas}</div>
+        <StackItem size="fill" xstyle={styles.viewport}>
+          {canvas}
+        </StackItem>
         {dialogs}
         {accountOpen && <AccountSettingsDialog isOpen={accountOpen} onOpenChange={setAccountOpen} account={account} />}
-      </div>,
+      </VStack>,
       header,
     )
 
@@ -543,8 +603,8 @@ export function ContractPage({
         annotations,
         writable: writableMarks,
         busy,
-        add: async (page, mark) => {
-          const result = await mutate('annotation', { action: 'add', page, text: '', markup: mark })
+        add: async (page, mark, context) => {
+          const result = await mutate('annotation', { action: 'add', page, text: '', markup: mark, ...context })
           if (result) {
             setRedoMarks([])
           }
@@ -622,6 +682,10 @@ export function ContractPage({
       document={room.document}
       awareness={room.awareness}
       name={account.name}
+      accountId={account.id}
+      presence={presence}
+      workspaceParticipants={Boolean(sharingAccess?.canViewParticipants)}
+      connected={connection.ready}
       editable={canEdit}
       {...definedProps({ frozen: contract.sourcePdf || (!draft && !recoverable) ? { pdf, exportActions } : undefined })}
       syncStatus={

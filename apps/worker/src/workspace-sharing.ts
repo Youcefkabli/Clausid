@@ -54,7 +54,7 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
   const { pathname } = new URL(request.url)
   const account = pathname === '/sharing/forget-contract' ? cleanupPartyFromRequest(request) : accountFromRequest(request)
   const state = await readSharing(ctx.storage)
-  const party = { id: account.id, email: account.email }
+  const party = { id: account.id, email: account.email, ...('name' in account && typeof account.name === 'string' ? { name: account.name.slice(0, 80) } : {}) }
 
   if (pathname === '/sharing/initialize') {
     const body = initializeWorkspaceSchema.parse(await readJson(request, 32_768))
@@ -286,7 +286,7 @@ export async function workspaceSharing(ctx: DurableObjectState, env: Env, reques
   if (pathname === '/sharing/parties') {
     return Response.json({
       role: owner ? 'owner' : 'member',
-      parties: [state.owner, ...state.parties].map(({ id, email }) => ({ id, email })),
+      parties: [state.owner, ...state.parties].map(({ id, email, name }) => ({ id, email, ...(name === undefined ? {} : { name }) })),
       invitations: owner ? state.invites.filter(({ expires }) => expires > Date.now()).map(({ email }) => email) : [],
     })
   }

@@ -2,6 +2,7 @@ import { definedProps } from './defined-props.ts'
 import { requiredValue } from '../../../packages/contracts/src/invariant.ts'
 import { contractViewSchema, summariesSchema, workspaceSchema, workspacesSchema } from '@clausid/contracts'
 import WorkspacesTable, { WorkspaceContractsTable } from './app/table-grouped/page.tsx'
+import { WorkspaceParticipants } from './participants.tsx'
 import { WorkspacePartiesDialog } from './workspace-parties.tsx'
 import WorkspaceWizard from './app/form-wizard/page.tsx'
 import LoginCard from './app/login-card/page.tsx'
@@ -64,11 +65,13 @@ if (inviteKey && location.hash) {
 }
 
 const headerStyles = stylex.create({
+  centeredContent: { marginInlineStart: 'auto', marginInlineEnd: 'auto' },
+  pageContent: { marginInlineStart: 'auto', marginInlineEnd: 'auto', padding: 'clamp(var(--spacing-4), 4vw, var(--spacing-10))' },
   navigation: {
     minHeight: 'calc(var(--spacing-8) + var(--spacing-1))',
     paddingBlock: 'var(--spacing-0-5)',
   },
-  centered: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)' },
+  centered: { display: 'grid', gridTemplateColumns: 'minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr)' },
 })
 
 function Frame({
@@ -92,13 +95,19 @@ function Frame({
       endContent={
         <>
           {editorHeader?.end}
-          {account && <AccountSettings account={account} />}
+          {account && (
+            <HStack gap={1} vAlign="center" role="group" aria-label="Participants and account">
+              {editorHeader?.participants}
+              <AccountSettings account={account} />
+            </HStack>
+          )}
         </>
       }
     />
   )
   return (
     <AppShell
+      variant={editorHeader ? 'section' : 'elevated'}
       mobileNav={editorHeader ? false : undefined}
       topNav={
         editorHeader?.stackedTools && editorHeader.tools ? (
@@ -112,7 +121,13 @@ function Frame({
       }
       contentPadding={0}
     >
-      {editorHeader || fillViewport ? children : <div className="page-content">{children}</div>}
+      {editorHeader || fillViewport ? (
+        children
+      ) : (
+        <VStack width="100%" maxWidth={1200} gap={4} xstyle={headerStyles.pageContent}>
+          {children}
+        </VStack>
+      )}
     </AppShell>
   )
 }
@@ -137,20 +152,16 @@ function Invitation({ id, inviteKey }: { id: string; inviteKey: string }) {
     }
   }
   return (
-    <section className="auth-panel">
+    <VStack as="section" width="100%" maxWidth={440} xstyle={headerStyles.centeredContent}>
       <Card padding={5}>
-        <div className="flow">
+        <VStack gap={4}>
           <Heading level={1}>{isWorkspaceInvite ? 'Workspace invitation' : 'Contract invitation'}</Heading>
-          <p>{token ? 'Accept to join with your verified account.' : 'Open the invitation link from your email.'}</p>
-          {error && (
-            <div role="alert">
-              <Banner status="error" title={error} />
-            </div>
-          )}
+          <Text>{token ? 'Accept to join with your verified account.' : 'Open the invitation link from your email.'}</Text>
+          {error && <Banner status="error" title={error} role="alert" />}
           {token && <Button label="Accept invitation" variant="primary" clickAction={accept} />}
-        </div>
+        </VStack>
       </Card>
-    </section>
+    </VStack>
   )
 }
 
@@ -318,6 +329,7 @@ function Dashboard({ store }: { store: AppStore }) {
                 {selectedWorkspace?.role === 'owner' && selectedWorkspace.documentName && (
                   <Button label={'Download ' + selectedWorkspace.documentName} href={'/api/workspaces/' + selectedWorkspace.id + '/document'} />
                 )}
+                {selectedWorkspace && <WorkspaceParticipants key={selectedWorkspace.id} workspaceId={selectedWorkspace.id} />}
                 {selectedWorkspace && <WorkspacePartiesDialog workspace={selectedWorkspace} />}
                 {selectedWorkspace?.role === 'owner' && <Button label="Add document" variant="primary" onClick={() => changeCreateOpen(true)} />}
               </HStack>
@@ -390,7 +402,7 @@ function Dashboard({ store }: { store: AppStore }) {
   )
 }
 
-function StoreGate({ account }: { account: { name: string; email: string } }) {
+function StoreGate({ account }: { account: { id: string; name: string; email: string } }) {
   const [store, setStore] = useState<AppStore>()
   const [error, setError] = useState('')
   useEffect(() => {
@@ -433,15 +445,7 @@ function StoreGate({ account }: { account: { name: string; email: string } }) {
   }
   return (
     <Frame account={account} fillViewport={Boolean(store)}>
-      {error ? (
-        <div role="alert">
-          <Banner status="error" title={error} />
-        </div>
-      ) : !store ? (
-        <p role="status">Opening workspace…</p>
-      ) : (
-        <Dashboard store={store} />
-      )}
+      {error ? <Banner status="error" title={error} role="alert" /> : !store ? <Text role="status">Opening workspace…</Text> : <Dashboard store={store} />}
     </Frame>
   )
 }
@@ -484,7 +488,7 @@ function App() {
   if (session.isPending && !session.isRefetching) {
     return (
       <Frame>
-        <p role="status">Checking your session…</p>
+        <Text role="status">Checking your session…</Text>
       </Frame>
     )
   }

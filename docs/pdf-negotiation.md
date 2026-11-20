@@ -28,6 +28,29 @@ output is capped at 1,900,000 bytes by the actor. See the [Rust parser](../packa
 
 ## Targeting a source passage
 
+The [Canvas selection toolbar](canvas-design-plan.md) offers Comment, Highlight, Underline,
+Strikethrough and Suggest replacement after text selection. Each selected visual line is measured
+from the actual PDF.js range and normalized against its page, so marks follow text at any zoom.
+Multi-line marking creates one ordinary, reviewable drawing annotation per line. The client snapshots
+these rectangles, line quotes/locations and stable request IDs before posting. Partial failure retains
+the selection and retry IDs; retry replays acknowledged line requests without adding duplicates.
+Existing annotation capacity, digest rejection, provider approval and freeze rules still apply.
+The selection captures quote, page, location and displayed digest before
+focus moves. Inline comments reuse the existing annotation endpoint and retry receipt. Suggestions
+retain the manual source-line fallback for ambiguous mapping. Link/text-color authoring belongs to
+native drafts; imported PDF edits continue through the bounded rewrite and annotation protocols.
+
+The page canvas owns visible PDF glyphs. The selectable DOM text layer stays transparent during
+browser selection and passage/review/hover highlights. Selection adds a translucent background
+without repainting fallback-font glyphs over the rendered page; copying and selection geometry
+continue to use the text layer.
+
+Hover previews use quote/location witnesses for text and actual normalized stroke paths for
+drawings. Quote-only legacy comments require a unique match on their page, including multi-line
+selection. Ambiguous/stale text and page-only comments use page gutter controls rather than a
+guessed passage. Withdrawn items are excluded. These overlays never alter source/negotiated bytes;
+the existing provider decision and frozen-artifact rules remain authoritative.
+
 Inspected text blocks have zero-based `page` and `block`, source text and a baseline coordinate.
 The public text-block query takes a one-based page and filters `block.page === page - 1`.
 PDF annotations use one-based pages; persisted rewrite edits use zero-based pages.
@@ -35,7 +58,8 @@ PDF annotations use one-based pages; persisted rewrite edits use zero-based page
 A proposal sends exact expected text and a replacement against a source block. The actor requires
 one occurrence in that line and computes the offset with `Array.from(prefix).length`: Unicode
 scalar count, not UTF-16 code units or UTF-8 bytes. Drawing points are normalized to [0,1]; a PDF
-location's x/y and scalar offset are not interchangeable with those normalized drawing points.
+location's x/y and UTF-16 text-layer offset are not interchangeable with those normalized drawing
+points or the rewrite engine's Unicode-scalar offsets.
 
 The browser sends the displayed negotiated/source digest when available. If it differs from the
 current artifact, the actor returns 409 before accepting the proposal. Source-page/block identity

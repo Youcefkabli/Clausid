@@ -88,8 +88,11 @@ export function connectContract(
         if (frame.update) {
           Y.applyUpdate(doc, frame.update, remote)
         }
-        present = message.contract.status === 'Draft' && message.contract.role !== 'signer'
-        writable = message.contract.status === 'Draft' && !message.contract.sourcePdf
+        present = true
+        if (message.self) {
+          awareness.setLocalStateField('user', message.self)
+        }
+        writable = message.contract.status === 'Draft' && message.contract.role !== 'signer' && !message.contract.sourcePdf
         if (!ready) {
           ready = true
           retry = 400

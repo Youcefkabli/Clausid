@@ -9,6 +9,7 @@ import {
   signatureSchema,
   statusSchema,
   workspaceSchema,
+  workspaceActivitySchema,
 } from '@clausid/contracts'
 import type { ResponseSchema } from '@clausid/contracts'
 
@@ -17,6 +18,13 @@ const email = z.email().max(254)
 const time = z.number().finite().nonnegative()
 export const accountSchema = z.object({ id, email, name: z.string(), createdAt: time, expires: time }).passthrough()
 export type Account = z.infer<typeof accountSchema>
+export const workspaceSessionSchema = z.object({
+  account: accountSchema,
+  updatedAt: time,
+  status: workspaceActivitySchema.shape.status,
+  contractId: workspaceActivitySchema.shape.contractId,
+})
+export type WorkspaceSession = z.infer<typeof workspaceSessionSchema>
 const memberSchema = partySchema.passthrough()
 const inviteSchema = z.object({ id, digest: digestSchema, email, expires: time, role: z.enum(['editor', 'signer']) }).passthrough()
 const mailSchema = z.object({ id, email, token: z.string(), role: z.enum(['editor', 'signer']) }).passthrough()
@@ -107,7 +115,7 @@ export type PdfNode = {
   type: string
   text?: string | undefined
   attrs?: Record<string, unknown> | undefined
-  marks?: { type: string }[] | undefined
+  marks?: { type: string; attrs?: Record<string, unknown> | undefined }[] | undefined
   content?: PdfNode[] | undefined
 }
 export const pdfNodeSchema: z.ZodType<PdfNode> = z.lazy(() =>
@@ -115,7 +123,7 @@ export const pdfNodeSchema: z.ZodType<PdfNode> = z.lazy(() =>
     type: z.string(),
     text: z.string().optional(),
     attrs: z.record(z.string(), z.unknown()).optional(),
-    marks: z.array(z.object({ type: z.string() })).optional(),
+    marks: z.array(z.object({ type: z.string(), attrs: z.record(z.string(), z.unknown()).optional() })).optional(),
     content: z.array(pdfNodeSchema).optional(),
   }),
 )

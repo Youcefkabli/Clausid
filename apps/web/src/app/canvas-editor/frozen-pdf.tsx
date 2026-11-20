@@ -11,6 +11,7 @@ import { getDocument, GlobalWorkerOptions, TextLayer } from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import { PdfNavigation, type Passage } from './navigation.ts'
 import { pdfBookmark, pdfPageTarget } from '../../pdf-bookmarks.ts'
+import { pdfSelectionMarks } from '../../pdf-selection.ts'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -157,6 +158,7 @@ function PdfPage({ document, number, pageAnchors, markup }: { document: PDFDocum
       quote,
       singleLine,
       digest: navigation.digest,
+      marks: pdfSelectionMarks(range, holder.current, lines.current),
       ...(run ? { run } : {}),
       offset: Number(start?.['dataset']['offset'] ?? 0) + range.startOffset + selection.toString().indexOf(quote),
     })

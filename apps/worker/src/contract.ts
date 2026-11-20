@@ -5,6 +5,7 @@ import { strToU8, zipSync } from 'fflate'
 import {
   assignContract,
   clientMessage,
+  cursorSchema,
   consentText,
   consentVersion,
   freezeContract,
@@ -18,6 +19,7 @@ import {
 } from '@clausid/contracts'
 import type { ContractView, NativeThread, PdfAnnotation, PdfTextBlock, Role, ServerMessage, Signature } from '@clausid/contracts'
 import type { Account, Env } from './http.ts'
+import { participantIdentity } from './presence-state.ts'
 import { artifact, decode, encode, hex, HttpError, internal, readJson, safeResponse, sha256 } from './http.ts'
 import { authorizedOperation, snapshotObject } from './operations.ts'
 import { reviewPassage, validateDraft } from './draft.ts'
@@ -182,7 +184,6 @@ export class Contract extends DurableObject<Env> {
     if (attachment.clientId === undefined || attachment.clock === undefined) {
       return
     }
-    const colors = ['#1d6494', '#9b3e62', '#47661f', '#7c4b99', '#9b501b']
     return {
       type: 'presence',
       clientId: attachment.clientId,
@@ -190,8 +191,8 @@ export class Contract extends DurableObject<Env> {
       state: gone
         ? null
         : {
-            user: { name: attachment.account.name.slice(0, 80), email: attachment.account.email, color: colors[attachment.clientId % colors.length] },
-            cursor: attachment.cursor,
+            user: participantIdentity(attachment.account),
+            cursor: cursorSchema.safeParse(attachment.cursor).data ?? null,
           },
     }
   }
@@ -201,7 +202,7 @@ export class Contract extends DurableObject<Env> {
         continue
       }
       const { account } = storedRecord(attachmentSchema, socket.deserializeAttachment())
-      if (account.expires > Date.now() && this.#state?.status === 'Draft' && this.#role(this.#state, account)) {
+      if (account.expires > Date.now() && this.#state && this.#role(this.#state, account)) {
         this.#send(socket, message)
       }
     }
@@ -697,9 +698,10 @@ export class Contract extends DurableObject<Env> {
       this.#send(socket, {
         type: 'state',
         contract: view,
+        self: participantIdentity(account),
         draft: state.status === 'Draft' && !state.sourcePdf ? encode(Y.encodeStateAsUpdate(this.#draft)) : undefined,
       })
-      if (state.status === 'Draft') {
+      {
         for (const other of this.ctx.getWebSockets()) {
           if (other === socket) {
             continue
@@ -982,7 +984,7 @@ export class Contract extends DurableObject<Env> {
         socket.close(4012, 'Refresh session')
         return
       }
-      if (state.status !== 'Draft' || typeof message !== 'string' || message.length > 360_000) {
+      if (typeof message !== 'string' || message.length > 360_000) {
         this.#send(socket, { type: 'error', message: 'The draft is unavailable or the update is too large.' })
         return
       }
@@ -1007,6 +1009,9 @@ export class Contract extends DurableObject<Env> {
           socket.serializeAttachment(attachment)
           this.#broadcast(requiredValue(this.#presence(attachment)), socket)
           return
+        }
+        if (state.status !== 'Draft' || this.#role(state, attachment.account) === 'signer') {
+          throw new HttpError(403, 'This document is read-only.')
         }
         if (state.sourcePdf) {
           throw new HttpError(409, 'Use PDF annotations to propose changes.')

@@ -43,10 +43,10 @@ export function nativeSelection(editor: Editor): NativeAnchor | undefined {
   }
   return { start: nativePosition(editor, from), end: nativePosition(editor, to), quote }
 }
-export function locateNative(editor: Editor, anchor: NativeAnchor) {
+export function nativeBounds(editor: Editor, anchor: NativeAnchor) {
   const sync = ySyncPluginKey.getState(editor.state)
   if (!sync?.binding) {
-    return false
+    return
   }
   const resolve = (value: string) =>
     relativePositionToAbsolutePosition(
@@ -55,12 +55,28 @@ export function locateNative(editor: Editor, anchor: NativeAnchor) {
       Y.decodeRelativePosition(Uint8Array.from(atob(value), (c) => c.charCodeAt(0))),
       sync.binding.mapping,
     )
-  const from = resolve(anchor.start),
-    to = resolve(anchor.end)
-  if (from === null || to === null || editor.state.doc.textBetween(from, to, '\n') !== anchor.quote) {
-    return false
+  try {
+    const from = resolve(anchor.start),
+      to = resolve(anchor.end)
+    if (
+      from === null ||
+      to === null ||
+      to <= from ||
+      from < 0 ||
+      to > editor.state.doc.content.size ||
+      editor.state.doc.textBetween(from, to, '\n') !== anchor.quote
+    ) {
+      return
+    }
+    return { from, to }
+  } catch {
+    // Invalid or stale relative positions cannot identify a display passage.
+    return
   }
-  return editor.chain().focus().setTextSelection({ from, to }).scrollIntoView().run()
+}
+export function locateNative(editor: Editor, anchor: NativeAnchor) {
+  const bounds = nativeBounds(editor, anchor)
+  return bounds ? editor.chain().focus().setTextSelection(bounds).scrollIntoView().run() : false
 }
 
 export function outline(passages: Passage[], corrections: OutlineCorrection[]) {
